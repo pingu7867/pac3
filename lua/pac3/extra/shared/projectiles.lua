@@ -1,10 +1,11 @@
-local enable = CreateConVar("pac_sv_projectiles", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, 'allow physical projectiles serverside')
-local pac_sv_projectile_max_attract_radius = CreateConVar("pac_sv_projectile_max_attract_radius", 300, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, 'maximum attract radius for physical projectiles')
-local pac_sv_projectile_max_damage_radius = CreateConVar("pac_sv_projectile_max_damage_radius", 100, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, 'maximum damage radius for physical projectiles')
-local pac_sv_projectile_max_phys_radius = CreateConVar("pac_sv_projectile_max_phys_radius", 100, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, 'maximum physical radius for physical projectiles')
-local pac_sv_projectile_max_speed = CreateConVar("pac_sv_projectile_max_speed", 100, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, 'maximum speed for physical projectiles')
-local pac_sv_projectile_max_damage = CreateConVar("pac_sv_projectile_max_damage", 100000, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, 'maximum damage for physical projectiles')
-local pac_sv_projectile_max_mass = CreateConVar("pac_sv_projectile_max_mass", 50000, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, 'maximum speed for physical projectiles')
+local enable = CreateConVar("pac_sv_projectiles", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "allow physical projectiles serverside")
+local pac_sv_projectile_max_attract_radius = CreateConVar("pac_sv_projectile_max_attract_radius", 300, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "maximum attract radius for physical projectiles")
+local pac_sv_projectile_max_damage_radius = CreateConVar("pac_sv_projectile_max_damage_radius", 100, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "maximum damage radius for physical projectiles")
+local pac_sv_projectile_max_phys_radius = CreateConVar("pac_sv_projectile_max_phys_radius", 100, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "maximum physical radius for physical projectiles")
+local pac_sv_projectile_max_speed = CreateConVar("pac_sv_projectile_max_speed", 100, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "maximum speed for physical projectiles")
+local pac_sv_projectile_max_damage = CreateConVar("pac_sv_projectile_max_damage", 100000, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "maximum damage for physical projectiles")
+local pac_sv_projectile_max_mass = CreateConVar("pac_sv_projectile_max_mass", 50000, CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "maximum speed for physical projectiles")
+local pac_sv_projectile_allow_custom_collision_mesh = CreateConVar("pac_sv_projectile_allow_custom_collision_mesh", "1", CLIENT and {FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether to allow other models' collision mesh as a physical projectile, rather than just box and sphere")
 
 do -- projectile entity
 	local ENT = {}
@@ -43,6 +44,13 @@ do -- projectile entity
 	end
 
 	if SERVER then
+		local physprop_indices = {}
+		for i=0,200,1 do
+			local name = util.GetSurfacePropName(i)
+			if name ~= "" then
+				physprop_indices[name] = i
+			end
+		end
 		pac.AddHook("EntityTakeDamage", "pac_projectile", function(ent, dmg)
 			local a, i = dmg:GetAttacker(), dmg:GetInflictor()
 
@@ -64,26 +72,24 @@ do -- projectile entity
 
 			self.projectile_owner = ply
 
-			local radius = math.Clamp(part.Radius, 1, pac_sv_projectile_max_phys_radius:GetFloat())
-
+			local radius = math.Clamp(part.Radius, 0.01, pac_sv_projectile_max_phys_radius:GetFloat())
 			if part.Sphere then
 				self:PhysicsInitSphere(radius, part.SurfaceProperties)
 			else
-				local valid_fallback = util.IsValidModel( part.FallbackSurfpropModel ) and not IsUselessModel(part.FallbackSurfpropModel)
+				local valid_fallback = util.IsValidModel( part.FallbackSurfpropModel ) and not IsUselessModel(part.FallbackSurfpropModel) and pac_sv_projectile_allow_custom_collision_mesh:GetBool()
 				--print("valid fallback? " .. part.FallbackSurfpropModel , valid_fallback)
 				self:PhysicsInitBox(Vector(1,1,1) * - radius, Vector(1,1,1) * radius, part.SurfaceProperties)
 
 				if part.OverridePhysMesh and valid_fallback then
 					self:SetModel(part.FallbackSurfpropModel)
 					self:PhysicsInit(SOLID_VPHYSICS)
-					self:PhysicsInitMultiConvex(self:GetPhysicsObject():GetMeshConvexes(), part.SurfaceProperties)
 				end
 
-				if part.RescalePhysMesh then
+				if valid_fallback and part.RescalePhysMesh then
 					local physmesh = self:GetPhysicsObject():GetMeshConvexes()
 					--hack from prop resizer
-					for convexkey, convex in pairs( physmesh ) do
-						for poskey, postab in pairs( convex ) do
+					for convexkey, convex in ipairs( physmesh ) do
+						for poskey, postab in ipairs( convex ) do
 							convex[ poskey ] = postab.pos * radius
 						end
 					end
@@ -93,17 +99,20 @@ do -- projectile entity
 				elseif not valid_fallback then
 					self:PhysicsInitBox(Vector(1,1,1) * - radius, Vector(1,1,1) * radius, part.SurfaceProperties)
 				end
-				
+
 			end
-			
+
 
 			local phys = self:GetPhysicsObject()
 			phys:SetMaterial(part.SurfaceProperties)
 
-
 			phys:EnableGravity(part.Gravity)
-			phys:AddVelocity((ang:Forward() + (VectorRand():Angle():Forward() * part.Spread)) * part.Speed * 1000)
-			phys:AddAngleVelocity(Vector(part.RandomAngleVelocity.x * math.Rand(-1,1), part.RandomAngleVelocity.y * math.Rand(-1,1), part.RandomAngleVelocity.z * math.Rand(-1,1)))
+			if not part.Freeze then
+				phys:AddVelocity((ang:Forward() + (VectorRand():Angle():Forward() * part.Spread)) * part.Speed * 1000)
+				phys:AddAngleVelocity(Vector(part.RandomAngleVelocity.x * math.Rand(-1,1), part.RandomAngleVelocity.y * math.Rand(-1,1), part.RandomAngleVelocity.z * math.Rand(-1,1)))
+			else
+				phys:EnableMotion(false)
+			end
 
 			phys:AddAngleVelocity(part.LocalAngleVelocity)
 
@@ -120,7 +129,7 @@ do -- projectile entity
 			else
 				phys:EnableCollisions(false)
 			end
-			
+
 
 			phys:SetMass(math.Clamp(part.Mass, 0.001, pac_sv_projectile_max_mass:GetFloat()))
 			phys:SetDamping(0, 0)
@@ -129,6 +138,7 @@ do -- projectile entity
 			self:SetAimDir(part.AimDir)
 			self:DrawShadow(part.DrawShadow)
 			self.part_data = part
+			self.surface_data = util.GetSurfaceData(physprop_indices[part.SurfaceProperties])
 		end
 
 		local damage_types = {
@@ -276,6 +286,20 @@ do -- projectile entity
 			if not self.part_data then return end
 			if not self.projectile_owner:IsValid() then return end
 
+			local our_surfdata = self.surface_data
+			local their_surfdata = util.GetSurfaceData(data.TheirSurfaceProps)
+
+			if (self.part_data.ImpactSounds) then
+				if data.Speed >= 300 then
+					if (data.Speed >= our_surfdata.hardVelocityThreshold) or (our_surfdata.hardnessFactor >= their_surfdata.hardThreshold) then
+						self:EmitSound(our_surfdata.impactHardSound)
+					else
+						self:EmitSound(our_surfdata.impactSoftSound)
+					end
+				elseif data.Speed >= 50 then
+					self:EmitSound(our_surfdata.impactSoftSound)
+				end
+			end
 			net.Start("pac_projectile_collide_event", true)
 				net.WriteEntity(self)
 				net.WriteTable({}) -- nothing for now
@@ -358,7 +382,7 @@ do -- projectile entity
 				if self.part_data.DamageType == "heal" then
 					if damage_radius > 0 then
 						for _, ent in ipairs(ents.FindInSphere(data.HitPos, damage_radius)) do
-							if ent ~= ply or self.part_data.CollideWithOwner then
+							if (ent ~= ply or self.part_data.CollideWithOwner) and ent:Health() < ent:GetMaxHealth() then
 								ent:SetHealth(math.min(ent:Health() + self.part_data.Damage, ent:GetMaxHealth()))
 							end
 						end
@@ -369,8 +393,9 @@ do -- projectile entity
 					if damage_radius > 0 then
 						for _, ent in ipairs(ents.FindInSphere(data.HitPos, damage_radius)) do
 							if ent.SetArmor and ent.Armor then
-								if ent ~= ply or self.part_data.CollideWithOwner then
-									ent:SetArmor(math.min(ent:Armor() + self.part_data.Damage, ent.GetMaxArmor and ent:GetMaxArmor() or 100))
+								local maxArmor = ent.GetMaxArmor and ent:GetMaxArmor() or 100
+								if (ent ~= ply or self.part_data.CollideWithOwner) and ent:Armor() < maxArmor then
+									ent:SetArmor(math.min(ent:Armor() + self.part_data.Damage, maxArmor))
 								end
 							end
 						end
@@ -520,6 +545,7 @@ if SERVER then
 		part.RemoveOnCollide = net.ReadBool()
 		part.CollideWithOwner = net.ReadBool()
 		part.RemoveOnHide = net.ReadBool()
+		part.RescalePhysMesh = net.ReadBool()
 		part.OverridePhysMesh = net.ReadBool()
 		part.Gravity = net.ReadBool()
 		part.AddOwnerSpeed = net.ReadBool()
@@ -529,6 +555,8 @@ if SERVER then
 		part.DrawShadow = net.ReadBool()
 		part.Sticky = net.ReadBool()
 		part.BulletImpact = net.ReadBool()
+		part.Freeze = net.ReadBool()
+		part.ImpactSounds = net.ReadBool()
 
 		--vectors
 		part.RandomAngleVelocity = net.ReadVector()
@@ -543,19 +571,21 @@ if SERVER then
 		part.AttractMode = table.KeyFromValue(attract_ids, net.ReadUInt(3))
 
 		--numbers
-		part.Radius = net.ReadUInt(8)
-		part.DamageRadius = net.ReadUInt(10)
-		part.Damage = net.ReadUInt(24)
-		part.Speed = net.ReadUInt(16) / 1000
+		local using_decimal = net.ReadBool()
+		if not using_decimal then part.Radius = net.ReadUInt(12) else part.Radius = net.ReadFloat() end
+
+		part.DamageRadius = net.ReadUInt(12)
+		part.Damage = math.Clamp(net.ReadUInt(24), 0, pac_sv_projectile_max_damage:GetFloat())
+		part.Speed = math.Clamp(net.ReadInt(18) / 1000, -pac_sv_projectile_max_speed:GetFloat(), pac_sv_projectile_max_speed:GetFloat())
 		part.Maximum = net.ReadUInt(7)
 		part.LifeTime = net.ReadUInt(14) / 100
-		part.Delay = net.ReadUInt(9) / 100
-		part.Mass = net.ReadUInt(18)
+		part.Delay = net.ReadUInt(13) / 100
+		part.Mass = net.ReadUInt(16)
 		part.Spread = net.ReadInt(10) / 100
 		part.Damping = net.ReadInt(20) / 100
 		part.Attract = net.ReadInt(14)
 		part.AttractRadius = net.ReadUInt(10)
-		part.Bounce = net.ReadInt(8) / 100
+		part.Bounce = net.ReadInt(15) / 100
 
 		local radius_limit = 2000
 
@@ -607,7 +637,7 @@ if SERVER then
 			ent:SetPos(pos)
 			ent:SetAngles(ang)
 			ent:Spawn()
-			
+
 
 			if not part.CollideWithOwner then
 				ent:SetOwner(ply)
@@ -696,7 +726,7 @@ if SERVER then
 		if ent.part_data.RemoveOnHide then
 			SafeRemoveEntity(ent)
 		end
-		
+
 	end)
-		
+
 end

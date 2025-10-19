@@ -6,13 +6,14 @@ language.Add("pac_hitscan", "Hitscan")
 local BUILDER, PART = pac.PartTemplate("base_drawable")
 
 PART.ClassName = "hitscan"
-PART.Group = "advanced"
+PART.Group = "combat"
 PART.Icon = "icon16/user_gray.png"
+
+PART.ImplementsDoubleClickSpecified = true
 
 BUILDER:StartStorableVars()
 	:GetSet("ServerBullets", true, {description = "serverside bullets can do damage and exert a physical impact force"})
 	:SetPropertyGroup("bullet properties")
-		:GetSet("BulletImpact", false)
 		:GetSet("Damage", 1, {editor_onchange = function (self,val) return math.floor(math.Clamp(val,0,268435455)) end})
 		:GetSet("Force",1000, {editor_onchange = function (self,val) return math.floor(math.Clamp(val,0,65535)) end})
 		:GetSet("AffectSelf", false, {description = "whether to allow to damage yourself"})
@@ -85,7 +86,7 @@ BUILDER:StartStorableVars()
 			["Toolgun tracer"] = "ToolTracer",
 			["Laser tracer"] = "LaserTracer"
 		}})
-		
+
 BUILDER:EndStorableVars()
 
 function PART:Initialize()
@@ -128,6 +129,10 @@ function PART:Shoot()
 
 		if IsValid(self.ent) then self.ent:FireBullets(self.bulletinfo) end
 	end
+end
+
+function PART:OnDoubleClickSpecified()
+	self:Shoot()
 end
 
 
@@ -187,7 +192,7 @@ local tracer_ids = {
 	["HunterTracer"] = 7,
 	["StriderTracer"] = 8,
 	["GunshipTracer"] = 9,
-	["ToolgunTracer"] = 10,
+	["ToolTracer"] = 10,
 	["LaserTracer"] = 11
 }
 
@@ -195,6 +200,7 @@ local tracer_ids = {
 function PART:SendNetMessage()
 	if pac.LocalPlayer ~= self:GetPlayerOwner() then return end
 	if not GetConVar('pac_sv_hitscan'):GetBool() then return end
+	if util.NetworkStringToID( "pac_hitscan" ) == 0 then self:SetError("This part is deactivated on the server") return end
 	pac.Blocked_Combat_Parts = pac.Blocked_Combat_Parts or {}
 	if pac.Blocked_Combat_Parts[self.ClassName] then
 		return
@@ -209,13 +215,14 @@ function PART:SendNetMessage()
 	net.WriteAngle(self:GetWorldAngles())
 
 	net.WriteUInt(damage_ids[self.DamageType] or 0,7)
-	net.WriteVector(Vector(self.SpreadX*self.Spread,self.SpreadY*self.Spread,0))
+	net.WriteUInt(math.abs(math.Clamp(10000 * self.SpreadX*self.Spread, 0, 1048575)), 20)
+	net.WriteUInt(math.abs(math.Clamp(10000 * self.SpreadY*self.Spread, 0, 1048575)), 20)
 	net.WriteUInt(self.Damage, 28)
 	net.WriteUInt(self.TracerSparseness, 8)
 	net.WriteUInt(self.Force, 16)
 	net.WriteUInt(self.MaxDistance, 16)
 	net.WriteUInt(self.NumberBullets, 9)
-	net.WriteUInt(tracer_ids[self.TracerName], 4)
+	net.WriteUInt(tracer_ids[self.TracerName] or 0, 4)
 	net.WriteBool(self.DistributeDamage)
 
 	net.WriteBool(self.DamageFalloff)

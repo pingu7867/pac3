@@ -373,7 +373,7 @@ pace.AddTool(L"import editor tool from file...", function()
 		Derma_StringRequest(L"filename", L"relative to garrysmod/data/pac3_editor/tools/", "mytool.txt", function(toolfile)
 			if file.Exists("pac3_editor/tools/" .. toolfile,"DATA") then
 				local toolstr = file.Read("pac3_editor/tools/" .. toolfile,"DATA")
-				local ctoolstr = [[pace.AddTool(L"]] .. toolfile .. [[", function(part, suboption) ]] .. toolstr .. " end)"
+				local ctoolstr = [[pace.AddTool("]] .. toolfile .. [[", function(part, suboption) ]] .. toolstr .. " end)"
 				RunStringEx(ctoolstr, "pac_editor_import_tool")
 				pac.LocalPlayer:ConCommand("pac_editor") --close and reopen editor
 			else
@@ -391,7 +391,7 @@ pace.AddTool(L"import editor tool from url...", function()
 			local function ToolDLSuccess(body)
 				local toolname = pac.PrettifyName(toolurl:match(".+/(.-)%."))
 				local toolstr = body
-				local ctoolstr = [[pace.AddTool(L"]] .. toolname .. [[", function(part, suboption)]] .. toolstr .. " end)"
+				local ctoolstr = [[pace.AddTool("]] .. toolname .. [[", function(part, suboption)]] .. toolstr .. " end)"
 				RunStringEx(ctoolstr, "pac_editor_import_tool")
 				pac.LocalPlayer:ConCommand("pac_editor") --close and reopen editor
 			end
@@ -490,7 +490,7 @@ pace.AddTool(L"Convert group of models to Expression 2 holograms", function(part
 	local str_ref =
 	[[
 
-    I++, HN++, HT[HN,table] = table(I, Base, Base, 0, POSITION, ANGLES, SCALE, MODEL, MATERIAL, vec4(COLOR, ALPHA), SKIN)
+    I++, HN++, HT[HN,table] = table(I, Base, Base, 0, POSITION, ANGLES, SCALE, MODEL, MATERIAL, vec4(COLOR, ALPHA), SKIN, INVERT)
 	]]
 
 	local str_header =
@@ -514,7 +514,7 @@ if (first() | dupefinished()) {
     Indices = 1
 
         #- Data structure
-        #- HN++, HT[HN, table] = table(Index, Local Entity (Entity:toWorld()), Parent Entity, ScaleType (Default 0), Pos, Ang, Scale, Model, Material, Color, Skin)
+        #- HN++, HT[HN, table] = table(Index, Local Entity (Entity:toWorld()), Parent Entity, ScaleType (Default 0), Pos, Ang, Scale, Model, Material, Color, Skin, Invert)
         #- CN++, CT[CN, table] = table(Index, Clip Index, Pos, Ang)
 
         #- Editing holograms
@@ -557,6 +557,7 @@ if (first() | dupefinished()) {
             holoMaterial(Index, This[9, string])
             holoColor(Index, This[10, vector4])
             holoSkin(Index, This[11, number])
+            holoInvertModel(Index, This[12, number])
         }
 
         if (ToggleShading) { holoDisableShading(Index, 1) }
@@ -676,6 +677,7 @@ elseif (CoreStatus == "RunThisCode") {
 			MATERIAL = ("%q"):format(part:GetMaterial()),
 			MODEL = ("%q"):format(part:GetModel()),
 			SKIN = part.GetSkin and part:GetSkin() or "0",
+			INVERT = part:GetInvert() and "1" or "0",
 			PARENT = "entity()"
 		})
 
@@ -821,18 +823,22 @@ pace.AddTool(L"proxy/event: Engrave targets", function(part)
 	end
 end)
 
+pace.AddTool(L"Process by Criteria", function(part)
+	pace.PromptProcessPartsByCriteria(part)
+end)
+
 --aka pace.UltraCleanup
 pace.AddTool(L"Destroy hidden parts, proxies and events", function(part)
-	
+
 	if not part then part = pace.current_part end
 	root = part:GetRootPart()
-	
+
 	pnl = Derma_Query("Only do this if you know what you're doing!\nMark parts as important in their notes to protect them.", "Warning",
 		"Destroy!", function() pace.UltraCleanup( root ) end,
 		"cancel", nil
 	)
 	pnl:SetWidth(300)
-	
+
 end)
 
 pace.AddTool(L"stop all custom animations", function()

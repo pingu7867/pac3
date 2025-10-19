@@ -3,8 +3,10 @@ local BUILDER, PART = pac.PartTemplate("base_movable")
 --ultrakill parryables: club, slash, buckshot
 
 PART.ClassName = "damage_zone"
-PART.Group = "advanced"
+PART.Group = "combat"
 PART.Icon = "icon16/package.png"
+
+PART.ImplementsDoubleClickSpecified = true
 
 local renderhooks = {
 	"PostDraw2DSkyBox",
@@ -21,6 +23,8 @@ local renderhooks = {
 	"PreDrawViewModel"
 }
 
+local recycle_hitmark = CreateConVar("pac_damage_zone_recycle_hitmarkers", "0", FCVAR_ARCHIVE, "Whether to use the experimental recycling system to save performance on spawning already created hit markers.\nIf this is 0, it will be more reliable but more costly because it creates new parts every time.")
+
 
 BUILDER:StartStorableVars()
 	:SetPropertyGroup("Targets")
@@ -28,6 +32,9 @@ BUILDER:StartStorableVars()
 		:GetSet("Players",true)
 		:GetSet("NPC",true)
 		:GetSet("PointEntities",true, {description = "Other source engine entities such as item_item_crate and prop_physics"})
+		:GetSet("Friendlies", true, {description = "friendly NPCs can be targeted"})
+		:GetSet("Neutrals", true, {description = "neutral NPCs can be targeted"})
+		:GetSet("Hostiles", true, {description = "hostile NPCs can be targeted"})
 	:SetPropertyGroup("Shape and Sampling")
 		:GetSet("Radius", 20, {editor_onchange = function(self,num) return math.floor(math.Clamp(num,-32768,32767)) end})
 		:GetSet("Length", 50, {editor_onchange = function(self,num) return math.floor(math.Clamp(num,-32768,32767)) end})
@@ -113,9 +120,18 @@ BUILDER:StartStorableVars()
 			heal = -1,
 			armor = -1,
 		}})
-		:GetSet("DoNotKill",false, {description = "Will only damage to as low as critical health"})
+		:GetSet("DoNotKill",false, {description = "Only damage to as low as critical health;\nOnly heal to as high as critical health\nIn other words, converge to the critical health"})
+		:GetSet("ReverseDoNotKill",false, {description = "Heal only if health is above critical health;\nDamage only if health is below critical health\nIn other words, move away from the critical health"})
 		:GetSet("CriticalHealth",1, {editor_onchange = function(self,num) return math.floor(math.Clamp(num,0,65535)) end})
 		:GetSet("MaxHpScaling", 0, {editor_clamp = {0,1}})
+	:SetPropertyGroup("DamageOverTime")
+		:GetSet("DOTMode", false, {description = "Damage over Time\nRepeats your damage a few times. Subject to serverside convar."})
+		:GetSet("DOTMethod", "Debuff", {
+			enums = {["Debuff"] = "Debuff", ["RefreshZone"] = "RefreshZone"},
+			description = "Whether the DoT means to repeat the damage on the target (handled by the server, starting from one damagezone action), or it means to retrigger the zone (handled by you, the client, throughout multiple damagezone actions).\nDebuff is like the target is burning, RefreshZone is like the area is on fire (but doesn't \"ignite\" targets)"})
+		:GetSet("DOTTime", 0, {editor_clamp = {0,32}, description = "delay between each repeated damage"})
+		:GetSet("DOTCount", 0, {editor_onchange = function(self,num) return math.floor(math.Clamp(num,0,127)) end, description = "number of repeated damage instances"})
+		:GetSet("NoInitialDOT", false, {description = "Skips the first instance (the instant one) of damage to achieve a delayed damage for example."})
 	:SetPropertyGroup("HitOutcome")
 		:GetSetPart("HitSoundPart")
 		:GetSetPart("KillSoundPart")
@@ -126,13 +142,13 @@ BUILDER:StartStorableVars()
 		:GetSet("AllowOverlappingHitSounds", false, {description = "If false, then when there are entities killed, do not play the hit sound part at the same time, since the kill sound takes priority"})
 		:GetSet("AllowOverlappingHitMarkers", false, {description = "If false, then for entities killed, do not spawn the hit marker part, since the kill marker takes priority and we don't want an overlap"})
 		:GetSet("RemoveDuplicateHitMarkers", true, {description = "If true, hit markers on an entity will be removed before creating a new one.\nBE WARNED. You still have a limited budget to create hit markers. It will be enforced."})
+		:GetSet("AttachPartsToTargetEntity",false, {description = "hitparts will be applied to the target entity rather than on the floating hitmarker entity\nThis will require pac_sv_damage_zone_allow_ragdoll_hitparts to be set to 1 serverside"})
 		:GetSet("RemoveNPCWeaponsOnKill",false)
 BUILDER:EndStorableVars()
 
 
 
-
-
+--[[UNUSED
 --a budget system to prevent mass abuse of hit marker parts
 function CalculateHitMarkerPrice(part)
 	if not part then return end
@@ -145,7 +161,7 @@ function HasBudget(owner, part)
 	if not owner.pac_dmgzone_hitmarker_budget then
 		owner.pac_dmgzone_hitmarker_budget = 50000 --50kB's worth of pac parts
 	end
-	
+
 	if part then --calculate based on an additional part added
 		--print("budget:" .. string.NiceSize(owner.pac_dmgzone_hitmarker_budget) .. ", cost: " .. string.NiceSize(CalculateHitMarkerPrice(part)))
 		return owner.pac_dmgzone_hitmarker_budget - CalculateHitMarkerPrice(part) > 0
@@ -153,7 +169,7 @@ function HasBudget(owner, part)
 		--print("budget:" .. string.NiceSize(owner.pac_dmgzone_hitmarker_budget))
 		return owner.pac_dmgzone_hitmarker_budget > 0
 	end
-end
+end]]
 
 function PART:LaunchAuditAndEnforceSoftBan(amount, reason)
 	if reason == "recursive loop" then
@@ -192,7 +208,7 @@ function PART:LaunchAuditAndEnforceSoftBan(amount, reason)
 			print(str_admonishment)
 		end
 	end)
-	
+
 end
 
 function PART:ClearBudgetAdmonishmentWarning()
@@ -207,6 +223,7 @@ local global_hitmarker_CSEnt_seed = 0
 local spawn_queue = {}
 local tick = 0
 
+local hitparts_dump = {}
 --multiple entities targeted + hit marker creating parts and setting up every time = FRAME DROPS
 --so we tried the budget method, it didn't change the fact that it costs a lot.
 
@@ -240,7 +257,7 @@ local part_setup_runtimes = 0
 		active
 		template_uid		--to identify from which part it's derived
 		hitmarker_id		--to identify what entity it's attached to
-		
+
 	}
 ]]
 --[[
@@ -248,39 +265,113 @@ local part_setup_runtimes = 0
 	owner.hitparts[free] = {active, specimen_part, hitmarker_id, template_uid}
 ]]
 
-function PART:FindOrCreateFloatingPart(owner, ent, part_uid, id)
+local must_remove_class = {
+	entity, entity2, player_movement, weapon
+}
+local function CleanupParts(group)
+	for i,part in ipairs(group:GetChildrenList()) do
+		if must_remove_class[part.ClassName] then
+			part:Remove()
+		end
+	end
+end
+
+function PART:FindOrCreateFloatingPart(owner, ent, part_uid, id, parent_ent)
 	owner.hitmarker_partpool = owner.hitmarker_partpool or {}
 	for spec_uid,tbl in pairs(owner.hitmarker_partpool) do
 		if tbl.template_uid == part_uid then
 			if not tbl.active then
+				local part = pac.GetPartFromUniqueID(pac.Hash(owner), spec_uid)
+				local group = part:GetRootPart()
+				group:CallRecursive("Think")
 				return pac.GetPartFromUniqueID(pac.Hash(owner), spec_uid) --whoowee we found an already existing part
 			end
 		end
 	end
 	--what if we don't!
 	local tbl = pac.GetPartFromUniqueID(pac.Hash(owner), part_uid):ToTable()
-	local group = pac.CreatePart("group", self:GetPlayerOwner()) --print("\tcreated a group for " .. id)
+	local group = pac.CreatePart("group", owner) --print("\tcreated a group for " .. id)
+	table.insert(hitparts_dump, {self, group, ent})
+	self.force_cleanup_hitparts = CurTime() + math.max(self.HitMarkerLifetime, self.KillMarkerLifetime)
+
 	group:SetShowInEditor(false)
 
-	local part = pac.CreatePart(tbl.self.ClassName, self:GetPlayerOwner(), tbl, tostring(tbl))
+	local part = pac.CreatePart(tbl.self.ClassName, owner, tbl, tostring(tbl))
 	group:AddChild(part)
+	CleanupParts(group)
 
 	group:CallRecursive("Think")
-	owner.hitmarker_partpool[group.UniqueID] = {active = true, hitmarker_id = id, template_uid = part_uid, group_part_data = group}
+	owner.hitmarker_partpool[group.UniqueID] = {player_owner = self:GetPlayerOwner(), active = true, hitmarker_id = id, template_uid = part_uid, group_part_data = group}
 
 	return group, owner.hitmarker_partpool[group.UniqueID]
 
 end
 
-local function FreeSpotInStack(owner)
-	owner.hitparts = owner.hitparts or {}
-	for i=1,20,1 do
-		if owner.hitparts[i] then
-			if not owner.hitparts[i].active then
-				return i
+local ragdolls = {}
+
+net.Receive("pac_send_ragdoll", function(len)
+	local entindex = net.ReadUInt(12)
+	local rag = net.ReadEntity()
+	ragdolls[entindex] = rag
+	timer.Simple(2, function() ragdolls[entindex] = nil end)
+end)
+
+local function TryAttachPartToAnEntity(self,group,parent_ent,marker_ent,killing)
+	local can_do_ragdolls = GetConVar("pac_sv_damage_zone_allow_ragdoll_hitparts"):GetBool()
+	if killing and can_do_ragdolls then
+		if isstring(killing) then
+			group:SetOwner(parent_ent)
+			return
+		end
+	end
+	if self.AttachPartsToTargetEntity then
+		--how to determine consent?? dunno I'll add a layer for outfit application consents if I ever implement pac sharing, but pac_sv_prop_outfits works for now
+		if parent_ent:IsPlayer() then
+			if killing and can_do_ragdolls then
+				timer.Simple(0.05, function()
+					local rag = parent_ent:GetRagdollEntity()
+					TryAttachPartToAnEntity(self,group,rag,marker_ent,false)
+				end)
+				return
+			end
+			if GetConVar("pac_sv_prop_outfits"):GetInt() == 2 then
+				group:SetOwnerName(parent_ent:EntIndex())
+			else
+				group:SetOwner(marker_ent)
 			end
 		else
-			return i
+			if killing and can_do_ragdolls then
+				local ent_index = parent_ent:EntIndex()
+				timer.Simple(0.05, function()
+					rag = ragdolls[ent_index]
+					if IsValid(rag) then
+						rag = rag
+						TryAttachPartToAnEntity(self,group,rag,ent, "ragdoll")
+					end
+				end)
+				return
+			end
+			group:SetOwnerName(parent_ent:EntIndex())
+		end
+		
+	else
+		group:SetOwner(marker_ent)
+	end
+end
+
+local function FreeSpotInStack(owner)
+	owner.hitparts = owner.hitparts or {}
+	owner.hitparts_freespots = owner.hitparts_freespots or {}
+	for i=1,50,1 do
+		if owner.hitparts_freespots[i] == nil then owner.hitparts_freespots[i] = false return i end 
+		if owner.hitparts_freespots[i] ~= false then
+			if owner.hitparts[i] then
+				if not owner.hitparts[i].active then
+					return i
+				end
+			else
+				return i
+			end
 		end
 	end
 	return nil
@@ -291,9 +382,9 @@ end
 	owner.hitparts[free] = {active, specimen_part, hitmarker_id, template_uid}
 ]]
 
-local function MatchInStack(owner, ent, uid, id)
+local function MatchInStack(owner, ent)
 	owner.hitparts = owner.hitparts or {}
-	for i=1,20,1 do
+	for i=1,50,1 do
 		if owner.hitparts[i] then
 			if owner.hitparts[i].template_uid == ent.template_uid and owner.hitparts[i].hitmarker_id == ent.marker_id then
 				return i
@@ -308,7 +399,7 @@ end
 
 local function UIDMatchInStackForExistingPart(owner, ent, part_uid, ent_id)
 	owner.hitparts = owner.hitparts or {}
-	for i=1,20,1 do
+	for i=1,50,1 do
 		if owner.hitparts[i] then
 			--print(i, "match compare:", owner.hitparts[i].active, owner.hitparts[i].specimen_part, owner.hitparts[i].hitmarker_id, owner.hitparts[i].template_uid == part_uid)
 			if owner.hitparts[i].template_uid == part_uid then
@@ -324,7 +415,7 @@ local function UIDMatchInStackForExistingPart(owner, ent, part_uid, ent_id)
 			end
 		end
 	end
-	
+
 	return nil
 end
 
@@ -332,7 +423,9 @@ end
 	owner.hitmarker_partpool[group.UniqueID] = {active, template_uid, group_part_data}
 	owner.hitparts[free] = {active, specimen_part, hitmarker_id, template_uid}
 ]]
-function PART:AddHitMarkerToStack(owner, ent, part_uid, ent_id)
+function PART:AddHitMarkerToStack(index, owner, ent, part_uid, ent_id, parent_ent, killing)
+	--print("trying to add to stack:")
+	--print("\t\t",owner, ent, part_uid, ent_id, parent_ent)
 	owner.hitparts = owner.hitparts or {}
 	local free = FreeSpotInStack(owner)
 	local returned_part = nil
@@ -340,20 +433,23 @@ function PART:AddHitMarkerToStack(owner, ent, part_uid, ent_id)
 	returned_part = existingpart
 
 	if free and not existingpart then
-		local group, tbl = self:FindOrCreateFloatingPart(owner, ent, part_uid, ent_id)
-		owner.hitparts[free] = {active = true, specimen_part = group, hitmarker_id = ent_id, template_uid = part_uid}
-		returned_part = owner.hitparts[free].specimen_part
+		local group, tbl = self:FindOrCreateFloatingPart(owner, ent, part_uid, ent_id, parent_ent)
+		owner.hitparts[index] = {active = true, specimen_part = group, hitmarker_id = ent_id, template_uid = part_uid, csent = ent, parent_ent = parent_ent}
+		returned_part = owner.hitparts[index].specimen_part
+		TryAttachPartToAnEntity(self,group,parent_ent,ent, killing)
 	else
-		owner.hitparts[free] = {active = true, specimen_part = returned_part, hitmarker_id = ent_id, template_uid = part_uid}
+		owner.hitparts[index] = {active = true, specimen_part = returned_part, hitmarker_id = ent_id, template_uid = part_uid, csent = ent, parent_ent = parent_ent}
+		TryAttachPartToAnEntity(self,existingpart,parent_ent,ent, killing)
 	end
 	
+
 	return returned_part
 end
 
 local function RemoveHitMarker(owner, ent, uid, id)
 	owner.hitparts = owner.hitparts or {}
 
-	local match = MatchInStack(owner, ent, uid, id)
+	local match = MatchInStack(owner, ent)
 	if match then
 		if owner.hitparts[match] then
 			owner.hitparts[match].active = false
@@ -365,7 +461,7 @@ local function RemoveHitMarker(owner, ent, uid, id)
 				tbl.active = false
 				tbl.group_part_data:SetHide(true)
 				tbl.group_part_data:SetShowInEditor(false)
-				tbl.group_part_data:SetOwner(owner)
+				tbl.group_part_data:SetOwnerName(owner:EntIndex())
 				--print(tbl.group_part_data, "dormant")
 			end
 		end
@@ -377,7 +473,8 @@ end
 	owner.hitmarker_partpool[group.UniqueID] = {active, template_uid, group_part_data}
 	owner.hitparts[free] = {active, specimen_part, hitmarker_id, template_uid}
 ]]
-function PART:AssignFloatingPartToEntity(part, owner, ent, parent_ent, template_uid, marker_id)
+function PART:AssignFloatingPartToEntity(index, part, owner, ent, parent_ent, template_uid, marker_id)
+
 	if not IsValid(part) then return false end
 
 	ent.pac_draw_distance = 0
@@ -385,10 +482,9 @@ function PART:AssignFloatingPartToEntity(part, owner, ent, parent_ent, template_
 	local group = part
 	local part2 = group:GetChildrenList()[1]
 
-	group:CallRecursive("Think")
-
-	owner.hitmarker_partpool[group.UniqueID] = {active = true, hitmarker_id = marker_id, template_uid = template_uid, group_part_data = group}
-	owner.hitparts[FreeSpotInStack(owner) or 1] = {active = true, specimen_part = group, hitmarker_id = marker_id, template_uid = template_uid}
+	owner.hitmarker_partpool[group.UniqueID] = 	{active = true, hitmarker_id = marker_id, template_uid = template_uid, group_part_data = group}
+	owner.hitparts[index] = 					{active = true, hitmarker_id = marker_id, template_uid = template_uid, specimen_part = group, csent = ent, parent_ent = parent_ent}
+	self.hitmarkers[group.UniqueID] = owner.hitmarker_partpool[group.UniqueID]
 
 	parent_ent.pac_dmgzone_hitmarker_ents = parent_ent.pac_dmgzone_hitmarker_ents or {}
 	ent.part = group
@@ -398,13 +494,47 @@ function PART:AssignFloatingPartToEntity(part, owner, ent, parent_ent, template_
 	ent.marker_id = marker_id
 
 	group:SetShowInEditor(false)
-	group:SetOwner(ent)
-	group.Owner = ent
-	group:SetHide(false)
-	part2:SetHide(false)
-	group:CallRecursive("Think")
+
+	TryAttachPartToAnEntity(self,group,parent_ent,ent)
+	
+	
+	timer.Simple(0, function() group:SetHide(false) part2:SetHide(false) group:CallRecursive("Think") group:CallRecursive("CalcShowHide") end)
+	
+	
+	--print(parent_ent, group:IsHidden(), part2:IsHidden())
+	
+	owner.hitparts_freespots[index] = false
 	--print(group, "assigned to " .. marker_id .. " / " .. parent_ent:EntIndex())
 
+end
+
+function PART:ClearHitMarkers()
+	for uid, part in pairs(self.hitmarkers) do
+		if IsValid(part) then part:GetRootOwner():Remove() end
+	end
+	local ply = self:GetPlayerOwner()
+	if ply.hitparts then
+		for i,v in pairs(ply.hitparts) do
+			v.specimen_part:Remove()
+		end
+	end
+	ply.hitmarker_partpool = nil
+	ply.hitparts = nil
+	--second pass
+	local remaining_parts = {}
+	for i,v in ipairs(hitparts_dump) do
+		if v[2]:IsValid() then
+			if self == v[1] then
+				v[2]:Remove()
+				hitparts_dump[i] = nil
+			end
+		else
+			hitparts_dump[i] = nil
+		end
+		--if it survives, reinsert it
+		if hitparts_dump[i] then table.insert(remaining_parts, v) end
+	end
+	hitparts_dump = remaining_parts
 end
 
 local function RecursedHitmarker(part)
@@ -429,7 +559,7 @@ local function RecursedHitmarker(part)
 			end
 		end
 	end
-	
+
 end
 
 
@@ -492,11 +622,16 @@ local hitbox_ids = {
 	["Ray"] = 10
 }
 
+--the hit results net receiver needs to resolve to the part but UID strings is a bit weighty so partial UID are a compromise
+local part_partialUID_caches = {}
+
 --more compressed net message
 function PART:SendNetMessage()
+	part_partialUID_caches[string.sub(self.UniqueID,0,6)] = self
 	pac.Blocked_Combat_Parts = pac.Blocked_Combat_Parts or {}
 	if pac.LocalPlayer ~= self:GetPlayerOwner() then return end
 	if not GetConVar('pac_sv_damage_zone'):GetBool() then return end
+	if util.NetworkStringToID( "pac_request_zone_damage" ) == 0 then self:SetError("This part is deactivated on the server") return end
 	if pac.Blocked_Combat_Parts then
 		if pac.Blocked_Combat_Parts[self.ClassName] then return end
 	end
@@ -518,6 +653,9 @@ function PART:SendNetMessage()
 	net.WriteBool(self.NPC)
 	net.WriteBool(self.Players)
 	net.WriteBool(self.PointEntities)
+	net.WriteBool(self.Friendlies)
+	net.WriteBool(self.Neutrals)
+	net.WriteBool(self.Hostiles)
 	net.WriteUInt(hitbox_ids[self.HitboxMode] or 1,5)
 	net.WriteUInt(damage_ids[self.DamageType] or 0,7)
 	net.WriteInt(self.Detail,6)
@@ -528,12 +666,25 @@ function PART:SendNetMessage()
 	net.WriteInt(math.floor(math.Clamp(8*self.DamageFalloffPower,-512, 511)), 12)
 	net.WriteBool(self.Bullet)
 	net.WriteBool(self.DoNotKill)
+	net.WriteBool(self.ReverseDoNotKill)
 	net.WriteUInt(self.CriticalHealth, 16)
 	net.WriteBool(self.RemoveNPCWeaponsOnKill)
+	net.WriteBool(self.DOTMode and (self.DOTMethod == "Debuff"))
+	net.WriteBool(self.NoInitialDOT and (self.DOTMethod == "Debuff"))
+	net.WriteUInt(self.DOTCount, 7)
+	net.WriteUInt(math.ceil(math.Clamp(64*self.DOTTime, 0, 2047)), 11)
+	net.WriteString(string.sub(self.UniqueID,0,6))
+	local using_hit_feedback = IsValid(self.HitMarkerPart) or IsValid(self.KillMarkerPart)
+	net.WriteBool(using_hit_feedback)
 	net.SendToServer()
 end
 
 function PART:OnShow()
+	self.remaining_DOT_count = self.DOTCount
+	self.next_DOT = self.NoInitialDOT and CurTime() + self.DOTTime or CurTime() - 1
+
+	if pace.still_loading_wearing then return end
+	if self.validTime > SysTime() then return end
 
 	if self.Preview then
 		self:PreviewHitbox()
@@ -541,6 +692,8 @@ function PART:OnShow()
 	self.stop_until = self.stop_until or 0
 	if self.stop_until then self:GetPlayerOwner().stop_hit_markers_admonishment_message_up = nil end
 	if (self:GetPlayerOwner().stop_hit_markers_admonishment_message_up) or self.stop_until > CurTime() then return end
+
+	if self.DOTMethod == "RefreshZone" then return end --handle with Think
 
 	if self:GetRootPart():GetOwner() ~= self:GetPlayerOwner() then --dumb workaround for when it activates before it realizes it needs to be hidden first
 		timer.Simple(0.01, function() --wait to check if needs to be hidden first
@@ -551,133 +704,233 @@ function PART:OnShow()
 
 			self:SendNetMessage()
 		end)
-	elseif (self.validTime > SysTime()) then
-		return
 	else
 		self:SendNetMessage()
 	end
+end
 
-	net.Receive("pac_hit_results", function()
-		
-		local hit = net.ReadBool()
-		local kill = net.ReadBool()
-		local highest_dmg = net.ReadFloat()
-		local ents_hit = net.ReadTable()
-		local ents_kill = net.ReadTable()
-		part_setup_runtimes = 0
+function PART:OnDoubleClickSpecified()
+	self:SendNetMessage()
+end
 
-		if RecursedHitmarker(self) then
-			self:LaunchAuditAndEnforceSoftBan(nil,"recursive loop")
+local dmgzone_requesting_corpses = {}
+function PART:SetAttachPartsToTargetEntity(b)
+	self.AttachPartsToTargetEntity = b
+	if pac.LocalPlayer ~= self:GetPlayerOwner() then return end
+	if self.KillMarkerPart == nil then return end
+	if b then
+		net.Start("pac_request_ragdoll_sends")
+		net.WriteBool(true)
+		net.SendToServer()
+		dmgzone_requesting_corpses[self] = true
+	else
+		dmgzone_requesting_corpses[self] = nil
+		if table.Count(dmgzone_requesting_corpses) == 0 then
+			net.Start("pac_request_ragdoll_sends")
+			net.WriteBool(false)
+			net.SendToServer()
 		end
+	end
+end
 
-		local pos = self:GetWorldPosition()
-		local owner = self:GetPlayerOwner()
+--revertable to projectile part's version which wastes time creating new parts but has less issues
+function PART:LegacyAttachToEntity(part, ent)
+	if not part:IsValid() then return false end
 
-		self.lag_risk = table.Count(ents_hit) > 15
+	ent.pac_draw_distance = 0
 
-		local function ValidSound(part)
-			if part ~= nil then
-				if part.ClassName == "sound" or part.ClassName == "sound2" then
-					return true
+	local tbl = part:ToTable()
+
+	local group = pac.CreatePart("group", self:GetPlayerOwner())
+	table.insert(hitparts_dump, {self, group, ent})
+	self.force_cleanup_hitparts = CurTime() + math.max(self.HitMarkerLifetime, self.KillMarkerLifetime)
+	group:SetShowInEditor(false)
+
+	local part_clone = pac.CreatePart(tbl.self.ClassName, self:GetPlayerOwner(), tbl, tostring(tbl))
+	group:AddChild(part_clone)
+
+	group:SetOwner(ent)
+	group.SetOwner = function(s) s.Owner = ent end
+	part_clone:SetHide(false)
+
+	local id = group.Id
+	local owner_id = self:GetPlayerOwnerId()
+	if owner_id then
+		id = id .. owner_id
+	end
+
+	ent:CallOnRemove("pac_hitmarker_" .. id, function() group:Remove() end)
+	group:CallRecursive("Think")
+
+	ent.pac_hitmark_part = group
+	ent.pac_hitmark = self --that's just the launcher though
+
+	return true
+end
+
+net.Receive("pac_hit_results", function(len)
+	local uid = net.ReadString() or ""
+	local self = part_partialUID_caches[uid]
+	if not self then return end
+	local hit = net.ReadBool()
+	if hit then
+		self.dmgzone_hit_done = CurTime()
+	end
+	local kill = net.ReadBool()
+	if kill then
+		self.dmgzone_kill_done = CurTime()
+	end
+	local highest_dmg = net.ReadFloat() or 0
+	--most damagezone won't use hitparts, skip the writetables
+	local do_ents_feedback = net.ReadBool()
+	local ents_hit = {}
+	local ents_kill = {}
+	if do_ents_feedback then
+		ents_hit = net.ReadTable(true)
+		if kill then ents_kill = net.ReadTable(true) end
+	end
+	part_setup_runtimes = 0
+
+	if RecursedHitmarker(self) then
+		self:LaunchAuditAndEnforceSoftBan(nil,"recursive loop")
+	end
+
+	local pos = self:GetWorldPosition()
+	local owner = self:GetPlayerOwner()
+
+	self.lag_risk = table.Count(ents_hit) > 15
+
+	local function ValidSound(part)
+		if part ~= nil then
+			if part.ClassName == "sound" or part.ClassName == "sound2" then
+				return true
+			end
+		end
+		return false
+	end
+	--grabbed the function from projectile.lua
+	--here, we spawn a static hitmarker and the max delay is 8 seconds
+	local function spawn(part, pos, ang, parent_ent, duration, owner, killing)
+		if not IsValid(owner) then return end
+		if part == self then return end --stop infinite feedback loops of using the damagezone as a hitmarker
+		--what if people employ a more roundabout method? CRACKDOWN!
+
+
+		if not recycle_hitmark:GetBool() then
+			local ent = parent_ent
+			local cs_ent = false
+			if not self.AttachPartsToTargetEntity then
+				ent = pac.CreateEntity("models/props_junk/popcan01a.mdl")
+				ent.is_pac_hitmarker = true
+				cs_ent = true
+				ent:SetNoDraw(true)
+				ent:SetPos(pos)
+			end
+			self:LegacyAttachToEntity(killing and self.KillMarkerPart or self.HitMarkerPart, ent)
+
+			timer.Simple(math.Clamp(killing and self.KillMarkerLifetime or self.HitMarkerLifetime, 0, 30), function()
+				if IsValid(ent) then
+					if ent.pac_hitmark_part and ent.pac_hitmark_part:IsValid() then
+						ent.pac_hitmark_part:Remove()
+					end
+
+					if cs_ent then
+						SafeRemoveEntityDelayed(ent, 0.5)
+					end
 				end
-			end
-			return false
+			end)
+			return
 		end
-		--grabbed the function from projectile.lua
-		--here, we spawn a static hitmarker and the max delay is 8 seconds
-		local function spawn(part, pos, ang, parent_ent, duration, owner)
-			if part == self then return end --stop infinite feedback loops of using the damagezone as a hitmarker
-			--what if people employ a more roundabout method? CRACKDOWN!
-			
-			if not owner.hitparts then owner.hitparts = {} end
 
-			if owner.stop_hit_markers_until then
-				if owner.stop_hit_markers_until > CurTime() then return end
-			end
-			if self.lag_risk and math.random() > 0.5 then return end
-			if not self:IsValid() then return end
-			if not part:IsValid() then return end
+		if not owner.hitparts then owner.hitparts = {} end
+
+		if owner.stop_hit_markers_until then
+			if owner.stop_hit_markers_until > CurTime() then return end
+		end
+		if self.lag_risk and math.random() > 0.5 then return end
+		if not self:IsValid() then return end
+		if not part:IsValid() then return end
 
 
-			local start = SysTime()
-			local ent = pac.CreateEntity("models/props_junk/popcan01a.mdl")
-			if not ent:IsValid() then return end
-			ent:SetNoDraw(true)
-			ent:SetOwner(self:GetPlayerOwner(true))
-			ent:SetPos(pos)
-			ent:SetAngles(ang)
-			global_hitmarker_CSEnt_seed = global_hitmarker_CSEnt_seed + 1
-			local csent_id = global_hitmarker_CSEnt_seed
+		local start = SysTime()
+		local ent = pac.CreateEntity("models/props_junk/popcan01a.mdl")
+		if not ent:IsValid() then return end
+		ent.is_pac_hitmarker = true
+		ent:SetNoDraw(true)
+		ent:SetOwner(self:GetPlayerOwner())
+		ent:SetPos(pos)
+		ent:SetAngles(ang)
+		global_hitmarker_CSEnt_seed = global_hitmarker_CSEnt_seed + 1
+		local csent_id = global_hitmarker_CSEnt_seed
 
-			--the spawn order needs to decide whether it can or can't create an ent or part
+		--the spawn order needs to decide whether it can or can't create an ent or part
 
-			local flush = self.RemoveDuplicateHitMarkers
-			if flush then
-				--go through the entity and remove the clientside hitmarkers entities
-				if parent_ent.pac_dmgzone_hitmarker_ents then
-					for id,ent2 in pairs(parent_ent.pac_dmgzone_hitmarker_ents) do
-						if IsValid(ent2) then
-							if ent2.part:IsValid() then
-								--owner.pac_dmgzone_hitmarker_budget = owner.pac_dmgzone_hitmarker_budget + CalculateHitMarkerPrice(part)
-								ent2.part:SetHide(true)
-							end
-							--RemoveHitMarker(owner, ent, part.UniqueID, id)
+		local flush = self.RemoveDuplicateHitMarkers
+		if flush then
+			--go through the entity and remove the clientside hitmarkers entities
+			if parent_ent.pac_dmgzone_hitmarker_ents then
+				for id,ent2 in pairs(parent_ent.pac_dmgzone_hitmarker_ents) do
+					if IsValid(ent2) then
+						if ent2.part:IsValid() then
+							ent2.part:SetHide(true)
 						end
 					end
 				end
 			end
+		end
 
-			if FreeSpotInStack(owner) then
-				if part:IsValid() then --self:AttachToEntity(part, ent, parent_ent, global_hitmarker_CSEnt_seed)
-					local newpart
-					local bool = UIDMatchInStackForExistingPart(owner, ent, part.UniqueID, csent_id)
-					
-					newpart = UIDMatchInStackForExistingPart(owner, ent, part.UniqueID, csent_id) or self:AddHitMarkerToStack(owner, ent, part.UniqueID, csent_id)
-					
-					self:AssignFloatingPartToEntity(newpart, owner, ent, parent_ent, part.UniqueID, csent_id)
+		local free_spot = FreeSpotInStack(owner)
+		
+		if free_spot then
+			if part:IsValid() then --self:AttachToEntity(part, ent, parent_ent, global_hitmarker_CSEnt_seed)
+				--print("free spot should be " .. free_spot)
+				local newpart
+				local bool = UIDMatchInStackForExistingPart(owner, ent, part.UniqueID, csent_id)
+				if bool then
+					newpart = bool
+					--print("\tpart is existing")
+				else
+					newpart = self:AddHitMarkerToStack(free_spot, owner, ent, part.UniqueID, csent_id, parent_ent, killing)
+					--print("\tpart should be added")
+				end
 
-					MsgC(bool and Color(0,255,0) or Color(0,200,255), bool and "existing" or "created", " : ", newpart, "\n")
-					timer.Simple(math.Clamp(duration, 0, 8), function()
-						if ent:IsValid() then
-							if parent_ent.pac_dmgzone_hitmarker_ents then
-								for id,ent2 in pairs(parent_ent.pac_dmgzone_hitmarker_ents) do
-									if IsValid(ent2) then
-										RemoveHitMarker(owner, ent2, part.UniqueID, id)
-										--SafeRemoveEntity(ent2)
-									end
+				self:AssignFloatingPartToEntity(free_spot, newpart, owner, ent, parent_ent, part.UniqueID, csent_id)
+
+				if self.Preview then MsgC("hitmarker:", bool and Color(0,255,0) or Color(0,200,255), bool and "existing" or "created", " : ", newpart, "\n") end
+				timer.Simple(math.Clamp(duration, 0, 8), function()
+					if ent:IsValid() then
+						if parent_ent.pac_dmgzone_hitmarker_ents then
+							for id,ent2 in pairs(parent_ent.pac_dmgzone_hitmarker_ents) do
+								if IsValid(ent2) then
+									RemoveHitMarker(owner, ent2, part.UniqueID, id)
+									owner.hitparts_freespots[free_spot] = true
+									--SafeRemoveEntity(ent2)
 								end
 							end
-							--[[timer.Simple(0.5, function()
-								RemoveHitMarker(owner, ent, part.UniqueID, csent_id)
-								SafeRemoveEntity(ent)
-							end)]]
 						end
-					end)
-				end
+					end
+				end)
 			end
-
-			local creation_delta = SysTime() - start
-			
-			return creation_delta
 		end
 
-		if IsValid(self.HitMarkerPart) then
-			--(self.HitMarkerPart, "price is", string.NiceSize(CalculateHitMarkerPrice(self.HitMarkerPart)))
-		end
+		local creation_delta = SysTime() - start
 
-		if hit then
-			self.dmgzone_hit_done = CurTime()
-			--try not to play both sounds at once
-			if ValidSound(self.HitSoundPart) then
-				--if can overlap, always play
-				if self.AllowOverlappingHitSounds then 
-					self.HitSoundPart:PlaySound()
-				--if cannot overlap, only play if there's only one entity or if we didn't kill
-				elseif (table.Count(ents_kill) == 1) or not (kill and ValidSound(self.KillSoundPart)) then
-					self.HitSoundPart:PlaySound()
-				end
+		return creation_delta
+	end
+
+	if hit then
+		--try not to play both sounds at once
+		if ValidSound(self.HitSoundPart) then
+			--if can overlap, always play
+			if self.AllowOverlappingHitSounds then
+				self.HitSoundPart:PlaySound()
+			--if cannot overlap, only play if there's only one entity or if we didn't kill
+			elseif (table.Count(ents_kill) <= 1) or not (kill and ValidSound(self.KillSoundPart)) then
+				self.HitSoundPart:PlaySound()
 			end
-			for ent,_ in pairs(ents_hit) do
+		end
+		if self.HitMarkerPart then
+			for _,ent in ipairs(ents_hit) do
 				if IsValid(ent) then
 					local ang = (ent:GetPos() - pos):Angle()
 					if ents_kill[ent] then
@@ -690,34 +943,37 @@ function PART:OnShow()
 				end
 			end
 		end
-		if kill then
-			self.dmgzone_kill_done = CurTime()
-			if ValidSound(self.KillSoundPart) then
-				self.KillSoundPart:PlaySound()
-			end
-
-			for ent,_ in pairs(ents_kill) do
+	end
+	if kill then
+		self.dmgzone_kill_done = CurTime()
+		if ValidSound(self.KillSoundPart) then
+			self.KillSoundPart:PlaySound()
+		end
+		if self.KillMarkerPart then
+			for _,ent in ipairs(ents_kill) do
 				if IsValid(ent) then
 					local ang = (ent:GetPos() - pos):Angle()
-					part_setup_runtimes = part_setup_runtimes + (spawn(self.KillMarkerPart, ent:WorldSpaceCenter(), ang, ent, self.KillMarkerLifetime, owner) or 0)
+					part_setup_runtimes = part_setup_runtimes + (spawn(self.KillMarkerPart, ent:WorldSpaceCenter(), ang, ent, self.KillMarkerLifetime, owner, true) or 0)
 				end
 			end
 		end
-		if IsValid(self.HitMarkerPart) then
-			--print("runtimes were " .. string.FormattedTime( part_setup_runtimes).ms .. "ms.\n\t" .. 1000*part_setup_runtimes .. " impact.\n\t" .. table.Count(self.HitMarkerPart:GetChildrenList()) .. " children, " .. 1000*part_setup_runtimes / table.Count(self.HitMarkerPart:GetChildrenList()) .. " impact per children")
-		end
+	end
+	if self.HitMarkerPart or self.KillMarkerPart then
 		if owner.hitparts then
-			for i,v in ipairs(owner.hitparts) do
-				--print(i,v,v.active,v.specimen_part,v.hitmarker_id,v.template_uid)
-			end
 			self:SetInfo(table.Count(owner.hitparts) .. " hitmarkers in slot")
 		end
-
-	end)
-
-end
+	end
+end)
 
 concommand.Add("pac_cleanup_damagezone_hitmarks", function()
+	print(hitparts_dump, #hitparts_dump .. " parts detected")
+	for i,v in ipairs(hitparts_dump) do
+		if v[2]:IsValid() then
+			v[2]:Remove()
+		end
+		hitparts_dump[i] = nil
+	end
+
 	if LocalPlayer().hitparts then
 		for i,v in pairs(LocalPlayer().hitparts) do
 			v.specimen_part:Remove()
@@ -730,34 +986,39 @@ end)
 
 
 function PART:OnHide()
-	hook.Remove(self.RenderingHook, "pace_draw_hitbox"..self.UniqueID)
+	pac.RemoveHook(self.RenderingHook, "pace_draw_hitbox"..self.UniqueID)
 	for _,v in pairs(renderhooks) do
-		hook.Remove(v, "pace_draw_hitbox"..self.UniqueID)
+		pac.RemoveHook(v, "pace_draw_hitbox"..self.UniqueID)
 	end
 end
 
 function PART:OnRemove()
-	hook.Remove(self.RenderingHook, "pace_draw_hitbox")
+	part_partialUID_caches[string.sub(self.UniqueID,0,6)] = nil
+	pac.RemoveHook(self.RenderingHook, "pace_draw_hitbox")
 	for _,v in pairs(renderhooks) do
-		hook.Remove(v, "pace_draw_hitbox")
+		pac.RemoveHook(v, "pace_draw_hitbox")
 	end
+	self:ClearHitMarkers()
+	--remove itself
+	pac.InsertSpecialTrackedPart(self:GetPlayerOwner(), self, true)
 end
 
 local previousRenderingHook
 
 function PART:PreviewHitbox()
-	
+
 	if previousRenderingHook ~= self.RenderingHook then
 		for _,v in pairs(renderhooks) do
-			hook.Remove(v, "pace_draw_hitbox"..self.UniqueID)
+			pac.RemoveHook(v, "pace_draw_hitbox"..self.UniqueID)
 		end
 		previousRenderingHook = self.RenderingHook
 	end
 
 	if not self.Preview then return end
 
-	hook.Add(self.RenderingHook, "pace_draw_hitbox"..self.UniqueID, function()
-		if not self.Preview then hook.Remove(self.RenderingHook, "pace_draw_hitbox"..self.UniqueID) end
+	pac.AddHook(self.RenderingHook, "pace_draw_hitbox"..self.UniqueID, function()
+		if not self.Preview then pac.RemoveHook(self.RenderingHook, "pace_draw_hitbox"..self.UniqueID) end
+		if not IsValid(self) then pac.RemoveHook(self.RenderingHook, "pace_draw_hitbox"..self.UniqueID) end
 		self:GetWorldPosition()
 		if self.HitboxMode == "Box" then
 			local mins =  Vector(-self.Radius, -self.Radius, -self.Length)
@@ -784,7 +1045,7 @@ function PART:PreviewHitbox()
 				if self.Radius ~= 0 then
 					local sides = self.Detail
 					if self.Detail < 1 then sides = 1 end
-					
+
 					local area_factor = self.Radius*self.Radius / (400 + 100*self.Length/math.max(self.Radius,0.1)) --bigger radius means more rays needed to cast to approximate the cylinder detection
 					local steps = 3 + math.ceil(4*(area_factor / ((4 + self.Length/4) / (20 / math.max(self.Detail,1)))))
 					if self.HitboxMode == "CylinderHybrid" and self.Length ~= 0 then
@@ -792,7 +1053,7 @@ function PART:PreviewHitbox()
 						steps = 1 + math.ceil(4*(area_factor / ((4 + self.Length/4) / (20 / math.max(self.Detail,1)))))
 					end
 					steps = math.max(steps + math.abs(self.ExtraSteps),1)
-					
+
 					--print("steps",steps, "total casts will be "..steps*self.Detail)
 					for ringnumber=1,0,-1/steps do --concentric circles go smaller and smaller by lowering the i multiplier
 						phase = math.random()
@@ -867,7 +1128,7 @@ function PART:PreviewHitbox()
 						steps = 1 + math.ceil(4*(area_factor / ((4 + self.Length/4) / (20 / math.max(self.Detail,1)))))
 					end
 					steps = math.max(steps + math.abs(self.ExtraSteps),1)
-					
+
 					--print("steps",steps, "total casts will be "..steps*self.Detail)
 					for ringnumber=1,0,-1/steps do --concentric circles go smaller and smaller by lowering the i multiplier
 						phase = math.random()
@@ -928,6 +1189,34 @@ end
 
 function PART:OnThink()
 	if self.Preview then self:PreviewHitbox() end
+	if self.DOTMethod == "RefreshZone" then
+		if self.DOTTime == 0 then return end --get outta here with those zero delays
+		if (CurTime() > self.next_DOT) and (self.remaining_DOT_count > 0) then
+			self:SendNetMessage()
+			self.remaining_DOT_count = self.remaining_DOT_count - 1
+			self.next_DOT = CurTime() + self.DOTTime
+		end
+	end
+	if self.force_cleanup_hitparts < CurTime() then self:ClearHitMarkers() end
+end
+
+function PART:GetNiceName()
+	local str = ""
+	if self.DOTMode then
+		str = str .. " [DoT " .. self.DOTCount .. "x : " .. self.DOTTime .. "s]"
+	end
+	str = str .. " " .. self.DamageType .. " " .. self.Damage
+	if self.MaxHpScaling ~= 0 then str = str .. " + " .. 100*self.MaxHpScaling .. "% max HP" end
+	if self.ReverseDoNotKill then
+		if self.DamageType == "heal" then
+			str = str .. " [if HP > " .. self.CriticalHealth .. "]"
+		else
+			str = str .. " [if HP < " .. self.CriticalHealth .. "]"
+		end
+	elseif self.DoNotKill then
+		str = str .. " [stop at " .. self.CriticalHealth .. " HP]"
+	end
+	return "damage zone" .. str
 end
 
 function PART:BuildCylinder(obj)
@@ -996,9 +1285,20 @@ function PART:BuildCone(obj)
 end
 
 function PART:Initialize()
-	
+	self.force_cleanup_hitparts = 0
+	self.hitmarkers = {}
 	if not GetConVar("pac_sv_damage_zone"):GetBool() or pac.Blocked_Combat_Parts[self.ClassName] then self:SetError("damage zones are disabled on this server!") end
-	self.validTime = SysTime() + 2
+	self.validTime = SysTime() + 5 --jank fix to try to stop activation on load
+	timer.Simple(0.1, function() --jank fix on the jank fix to allow it earlier on projectiles and hitmarkers
+		local ent = self:GetRootPart():GetOwner()
+		if IsValid(ent) then
+			if ent.is_pac_hitmarker or ent.pac_projectile_part then
+				self.validTime = 0
+			end
+		end
+	end)
+
+	pac.InsertSpecialTrackedPart(self:GetPlayerOwner(), self)
 end
 
 function PART:SetRadius(val)

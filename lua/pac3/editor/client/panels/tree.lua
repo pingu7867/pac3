@@ -168,7 +168,7 @@ do
 
 				node.Icon.event_icon:SetVisible(true)
 			else
-				if node.Icon.event_icon then
+				if node.Icon.event_icon and not node.Icon.event_icon_alt then
 					node.Icon.event_icon:SetVisible(false)
 				end
 			end
@@ -188,7 +188,7 @@ do
 		end
 	end
 
-	function DoScrollControl(self, action)
+	local function DoScrollControl(self, action)
 		pace.BulkSelectKey = input.GetKeyCode(GetConVar("pac_bulk_select_key"):GetString())
 		if
 				pace.current_part.pace_tree_node and
@@ -202,13 +202,13 @@ do
 				) and
 				not gui.IsConsoleVisible()
 			then
-	
+
 				if action == "editor_node_collapse" then
 					pace.Call("VariableChanged", pace.current_part, "EditorExpand", false)
 				elseif action == "editor_node_expand" then
 					pace.Call("VariableChanged", pace.current_part, "EditorExpand", true)
 				end
-	
+
 				if action == "editor_up" or action == "editor_pageup" then
 					local added_nodes = get_added_nodes(self)
 					local offset = action == "editor_pageup" and 10 or 1
@@ -224,13 +224,13 @@ do
 								end
 							end
 						end
-	
+
 						self.scrolled_up = self.scrolled_up or os.clock() + 0.4
 					end
 				else
 					self.scrolled_up = nil
 				end
-	
+
 				if action == "editor_down" or action == "editor_pagedown" then
 					local added_nodes = get_added_nodes(self)
 					local offset = action == "editor_pagedown" and 10 or 1
@@ -246,7 +246,7 @@ do
 								end
 							end
 						end
-	
+
 						self.scrolled_down = self.scrolled_down or os.clock() + 0.4
 					end
 				else
@@ -254,7 +254,7 @@ do
 				end
 			end
 	end
-	
+
 	function pace.DoScrollControls(action)
 		DoScrollControl(pace.tree, action)
 	end
@@ -308,6 +308,7 @@ local function install_drag(node)
 			if self.part and self.part:IsValid() and self.part:GetParent() ~= child.part then
 				pace.RecordUndoHistory()
 				self.part:SetParent(child.part)
+				pace.RefreshEvents()
 				pace.RecordUndoHistory()
 			end
 		elseif self.part and self.part:IsValid() then
@@ -316,6 +317,7 @@ local function install_drag(node)
 				local group = pac.CreatePart("group", self.part:GetPlayerOwner())
 				group:SetEditorExpand(true)
 				self.part:SetParent(group)
+				pace.RefreshEvents()
 				pace.RecordUndoHistory()
 				pace.TrySelectPart()
 
@@ -343,6 +345,7 @@ local function install_drag(node)
 			if self.part and self.part:IsValid() and child.part:GetParent() ~= self.part then
 				pace.RecordUndoHistory()
 				child.part:SetParent(self.part)
+				pace.RefreshEvents()
 				pace.RecordUndoHistory()
 			end
 		end
@@ -377,6 +380,25 @@ local function install_expand(node)
 				node.part:CallRecursive('SetEditorExpand', true)
 				pace.RefreshTree(true)
 			end):SetImage('icon16/arrow_down.png')
+
+			menu:AddSpacer()
+
+			local menu1, pnl = menu:AddSubMenu(L"double click actions") pnl:SetIcon("icon16/cursor.png")
+				menu1.GetDeleteSelf = function() return false end
+				local menu2, pnl = menu1:AddSubMenu(L"generic") pnl:SetIcon("icon16/world.png")
+				menu2.GetDeleteSelf = function() return false end
+				menu2:AddOption("expand / collapse", function() RunConsoleCommand("pac_doubleclick_action", "expand") end):SetImage('icon16/arrow_down.png')
+				menu2:AddOption("rename", function() RunConsoleCommand("pac_doubleclick_action", "rename") end):SetImage('icon16/text_align_center.png')
+				menu2:AddOption("write notes", function() RunConsoleCommand("pac_doubleclick_action", "notes") end):SetImage('icon16/page_white_edit.png')
+				menu2:AddOption("show / hide", function() RunConsoleCommand("pac_doubleclick_action", "showhide") end):SetImage('icon16/clock_red.png')
+				menu2:AddOption("only when specifed actions exist", function() RunConsoleCommand("pac_doubleclick_action", "specific_only") end):SetImage('icon16/application_xp_terminal.png')
+				menu2:AddOption("none", function() RunConsoleCommand("pac_doubleclick_action", "none") end):SetImage('icon16/collision_off.png')
+				local menu2, pnl = menu1:AddSubMenu(L"specific") pnl:SetIcon("icon16/application_xp_terminal.png")
+				menu2.GetDeleteSelf = function() return false end
+				menu2:AddOption("use generic actions only", function() RunConsoleCommand("pac_doubleclick_action_specified", "0") end):SetImage('icon16/world.png')
+				menu2:AddOption("use specific actions when available", function() RunConsoleCommand("pac_doubleclick_action_specified", "1") end):SetImage('icon16/cog.png')
+				menu2:AddOption("use even more specific actions (events)", function() RunConsoleCommand("pac_doubleclick_action_specified", "2") end):SetImage('icon16/clock.png')
+
 		end
 	end
 end
@@ -498,7 +520,8 @@ function PANEL:PopulateParts(node, parts, children)
 
 			fix_folder_funcs(part_node)
 
-			if part.Description then part_node:SetTooltip(L(part.Description)) end
+			if part.Description then part_node:SetTooltip(L(part.Description)) end --ok but have we ever had any Description other than "right click to add parts"?
+			if part.Notes ~= "" then part_node.Label:SetTooltip(part.Notes) end --idk if anyone uses Notes but tooltips are good if they have something on them. It can easily be overridden by other code anyway.
 
 			part.pace_tree_node = part_node
 			part_node.part = part
@@ -610,12 +633,11 @@ local function remove_node(part)
 		part.pace_tree_node:GetRoot().m_pSelectedItem = nil
 		part.pace_tree_node:Remove()
 		pace.RefreshTree()
-		
+
 	end
 end
 
 pac.AddHook("pac_OnPartRemove", "pace_remove_tree_nodes", remove_node)
-
 
 local last_refresh = 0
 local function refresh(part)
@@ -645,20 +667,13 @@ pac.AddHook("pace_OnVariableChanged", "pace_create_tree_nodes", function(part, k
 	end
 end)
 
-local function refresh_events_gated()
-	pace.final_scheduled_event_refresh = pace.final_scheduled_event_refresh or CurTime() + 0.08
-	pace.event_refresh_spam_time = CurTime()
-	hook.Add("Tick", "pace_refresh_events", function()
-		if CurTime() < pace.event_refresh_spam_time + 0.08 then return end
-		if CurTime() > pace.final_scheduled_event_refresh then
-			pace.RefreshEvents()
-			pace.final_scheduled_event_refresh = nil
-			hook.Remove("Tick", "pace_refresh_events")
-		end
-	end)
-end
+pace.allowed_event_refresh = 0
+
 
 function pace.RefreshEvents()
+	--spam preventer, (load parts' initializes gets called)
+	if pace.allowed_event_refresh > CurTime() then return else pace.allowed_event_refresh = CurTime() + 0.1 end
+
 	local events = {}
 	for _, part in pairs(pac.GetLocalParts()) do
 		if part.ClassName == "event" then
@@ -666,7 +681,7 @@ function pace.RefreshEvents()
 		end
 	end
 	local no_events = table.Count(events) == 0
-	
+
 	for _, child in pairs(pac.GetLocalParts()) do
 		child.active_events = {}
 		child.active_events_ref_count = 0
@@ -677,6 +692,7 @@ function pace.RefreshEvents()
 		end
 		child:CallRecursive("CalcShowHide", false)
 	end
+
 end
 
 function pace.RefreshTree(reset)
@@ -689,10 +705,9 @@ function pace.RefreshTree(reset)
 
 				pace.TrySelectPart()
 			end
-			refresh_events_gated()
 		end)
 	end
-	
+
 end
 
 if Entity(1):IsPlayer() and not PAC_RESTART and not VLL2_FILEDEF then

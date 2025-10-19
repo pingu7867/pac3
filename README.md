@@ -1,12 +1,12 @@
-# PAC4.5
+# PAC3
 
 ---
-THIS BRANCH IS NO LONGER UPDATED. I'm only keeping this branch to display my readme. For the latest fixes, get the cedricversion-for-final-publish branch!
 
+PAC3 gives you the ability to personalize your player model's look by placing objects and effects on yourself. You can go from putting just a hat on your head to creating an entire new player model. PAC works on any entity and can also be used as a way to make custom weapons and npcs for your gamemode easily. 
 
-Welcome to my experimental combat update for PAC3. Here's the overview of the important bits to expect.
+You can wear your outfit on any server with PAC3 and everyone should be able to see it on you as long as they have the content you used.
 
-
+---
 # New combat-related parts:
 
 	damage_zone: deals damage (a more direct and controllable alternative to projectiles)
@@ -156,13 +156,11 @@ just a quick edit for people with higher resolution screens
 
 -destroy hidden parts, proxies and events. I also call it Ultra cleanup. This is a quick but destructive optimization tool to improve framerate by only keeping visible parts and obliterating non-static elements. You can mark parts to keep by writing "important" in their notes field.
 
--Engrave targets: assign proxies and events' target part to quickly allow you to reorganize them in a separate group in the editor.
+<img width="650" alt="Screenshot 2023-09-02 at 06 54 28" src="https://github.com/CapsAdmin/pac3/assets/204157/276c7bfc-f5a9-422a-bfb6-683a26981539">
 
--dump model submaterials: same as dump player submaterials (prints the submaterials in the console) but for a pac3 model you select in the tree
+Some links to check out:
+* [wiki](https://wiki.pac3.info/start "PAC3 Wiki")
+* [steam workshop](http://steamcommunity.com/sharedfiles/filedetails/?id=104691717 "Workshop Version") 
+* [discord server](https://discord.gg/utpR3gJ "Join PAC3 Discord Server") 
 
 ---
-
-### Thank you for reading. Now go make something cool!
-
-### Yours truly,
-### Cédric.

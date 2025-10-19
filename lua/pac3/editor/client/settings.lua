@@ -1,63 +1,112 @@
 include("parts.lua")
 include("shortcuts.lua")
 
-local pac_submit_spam = CreateConVar('pac_submit_spam', '1', CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE}, 'Prevent users from spamming pac_submit')
-local pac_submit_limit = CreateConVar('pac_submit_limit', '30', CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE}, 'pac_submit spam limit')
-local hitscan_allow = CreateConVar("pac_sv_hitscan", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow hitscan parts serverside")
-local hitscan_max_bullets = CreateConVar("pac_sv_hitscan_max_bullets", "200", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "hitscan part maximum number of bullets")
-local hitscan_max_damage = CreateConVar("pac_sv_hitscan_max_damage", "20000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "hitscan part maximum damage")
-local hitscan_spreadout_dmg = CreateConVar("pac_sv_hitscan_divide_max_damage_by_max_bullets", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether or not force hitscans to divide their damage among the number of bullets fired")
+--{"cvar", "description", "tooltip", decimals, min, max}	if decimals is -1 it's a bool
+local convar_params_combat_generic = {
 
-local damagezone_allow = CreateConVar("pac_sv_damage_zone", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow damage zone parts serverside")
-local damagezone_max_damage = CreateConVar("pac_sv_damage_zone_max_damage", "20000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "damage zone maximum damage")
-local damagezone_max_length = CreateConVar("pac_sv_damage_zone_max_length", "20000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "damage zone maximum length")
-local damagezone_max_radius = CreateConVar("pac_sv_damage_zone_max_radius", "10000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "damage zone maximum radius")
-local damagezone_allow_dissolve = CreateConVar("pac_sv_damage_zone_allow_dissolve", "1", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether to enable entity dissolvers and removing NPCs\" weapons on death for damagezone")
+	--general sv protection
+	{"pac_sv_prop_protection", "Enforce generic prop protection for player-owned props and physics entities based on client consents.", "", -1, 0, 200},
+	{"pac_sv_combat_whitelisting", "Restrict new pac3 combat (damage zone, lock, force, hitscan, health modifier) to only whitelisted users.", "off = Blacklist mode: Default players are allowed to use the combat features\non = Whitelist mode: Default players aren't allowed to use the combat features until set to Allowed", -1, 0, 200},
+	{"pac_sv_block_combat_features_on_next_restart", "Block the combat features that aren't enabled. WARNING! Requires a restart!\nThis applies to damage zone, lock, force, hitscan and health modifier parts", "You can go to the console and set pac_sv_block_combat_features_on_next_restart to 2 to block everything.\nif you re-enable a blocked part, update with pac_sv_combat_reinitialize_missing_receivers", -1, 0, 200},
+	{"pac_sv_combat_enforce_netrate_monitor_serverside", "Enable serverside monitoring prints for allowance and rate limiters", "Enable serverside monitoring prints.\n0=let clients enforce their netrate allowance before sending messages\n1=the server will receive net messages and print the outcome.", -1, 0, 200},
+	{"pac_sv_combat_enforce_netrate", "Rate limiter (milliseconds)", "The milliseconds delay between net messages.\nIf this is 0, the allowance won't matter, otherwise early net messages use up the player's allowance.\nThe allowance regenerates gradually when unused, and one unit gets spent if the message is earlier than the rate limiter's delay.", 0, 0, 1000},
+	{"pac_sv_combat_enforce_netrate_buffersize", "Allowance, in number of messages", "Allowance:\nIf this is 0, only the time limiter will stop pac combat messages if they're too fast.\nOtherwise, players trying to use a pac combat message earlier will deduct 1 from the player's allowance, and only stop the messages if the allowance reaches 0.", 0, 0, 400},
+	{"pac_sv_entity_limit_per_combat_operation", "Hard entity limit to cutoff damage zones and force parts", "If the number of entities selected is more than this value, the whole operation gets dropped.\nThis is so that the server doesn't have to send huge amounts of entity updates to everyone.", 0, 0, 1000},
+	{"pac_sv_entity_limit_per_player_per_combat_operation", "Entity limit per player to cutoff damage zones and force parts", "When in multiplayer, with the server's player count, if the number of entities selected is more than this value, the whole operation gets dropped.\nThis is so that the server doesn't have to send huge amounts of entity updates to everyone.", 0, 0, 500},
+	{"pac_sv_player_limit_as_fraction_to_drop_damage_zone", "block damage zones targeting this fraction of players", "This applies when the zone covers more than 12 players. 0 is 0% of the server, 1 is 100%\nFor example, if this is at 0.5, there are 24 players and a damage zone covers 13 players, it will be blocked.", 2, 0, 1},
+	{"pac_sv_combat_distance_enforced", "distance to block combat actions that are too far", "The distance is compared between the action's origin and the player's position.\n0 to ignore.", 0, 0, 64000},
 
-local lock_allow = CreateConVar("pac_sv_lock", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow lock parts serverside")
-local lock_allow_grab = CreateConVar("pac_sv_lock_grab", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow lock part grabs serverside")
-local lock_allow_teleport = CreateConVar("pac_sv_lock_teleport", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow lock part teleports serverside")
-local lock_max_radius = CreateConVar("pac_sv_lock_max_grab_radius", "200", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "lock part maximum grab radius")
-local lock_allow_grab_ply = CreateConVar("pac_sv_lock_allow_grab_ply", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "allow grabbing players with lock part")
-local lock_allow_grab_npc = CreateConVar("pac_sv_lock_allow_grab_npc", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "allow grabbing NPCs with lock part")
-local lock_allow_grab_ent = CreateConVar("pac_sv_lock_allow_grab_ent", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "allow grabbing other entities with lock part")
+}
+local convar_params_lock = {
+	{"pac_sv_lock", "Allow lock part", "", -1, 0, 200},
+	{"pac_sv_lock_teleport", "Allow lock part teleportation", "", -1, 0, 200},
+	{"pac_sv_lock_grab", "Allow lock part grabbing", "", -1, 0, 200},
+	{"pac_sv_lock_aim", "Allow lock part aiming", "", -1, 0, 200},
+	{"pac_sv_lock_allow_grab_ply", "Allow grabbing players", "", -1, 0, 200},
+	{"pac_sv_lock_allow_grab_npc", "Allow grabbing NPCs", "", -1, 0, 200},
+	{"pac_sv_lock_allow_grab_ent", "Allow grabbing other entities", "", -1, 0, 200},
+	{"pac_sv_lock_max_grab_radius", "Max lock part grab range", "", 0, 0, 5000},
+}
+local convar_params_damage_zone = {
+	{"pac_sv_damage_zone", "Allow damage zone", "", -1, 0, 200},
+	{"pac_sv_damage_zone_max_radius", "Max damage zone radius", "", 0, 0, 32767},
+	{"pac_sv_damage_zone_max_length", "Max damage zone length", "", 0, 0, 32767},
+	{"pac_sv_damage_zone_max_damage", "Max damage zone damage", "", 0, 0, 268435455},
+	{"pac_sv_damage_zone_allow_dissolve", "Allow damage entity dissolvers", "", -1, 0, 200},
+	{"pac_sv_damage_zone_allow_ragdoll_hitparts", "Allow ragdoll hitparts", "", -1, 0, 200},
+}
+local convar_params_force = {
+	{"pac_sv_force", "Allow force part", "", -1, 0, 200},
+	{"pac_sv_force_max_radius", "Max force radius", "", 0, 0, 32767},
+	{"pac_sv_force_max_length", "Max force length", "", 0, 0, 32767},
+	{"pac_sv_force_max_length", "Max force amount", "", 0, 0, 10000000},
+}
+local convar_params_hitscan = {
+	{"pac_sv_hitscan", "allow serverside bullets", "", -1, 0, 200},
+	{"pac_sv_hitscan_max_damage", "Max hitscan damage (per bullet, per multishot,\ndepending on the next setting)", "", 0, 0, 268435455},
+	{"pac_sv_hitscan_divide_max_damage_by_max_bullets", "force hitscans to distribute their total damage accross bullets. if off, every bullet does full damage; if on, adding more bullets doesn't do more damage", "", -1, 0, 200},
+	{"pac_sv_hitscan_max_bullets", "Maximum number of bullets for hitscan multishots", "", 0, 0, 500},
+}
+local convar_params_projectile = {
+	{"pac_sv_projectiles", "allow serverside physical projectiles", "", -1, 0, 200},
+	{"pac_sv_projectile_allow_custom_collision_mesh", "allow custom collision meshes for physical projectiles", "", -1, 0, 200},
+	{"pac_sv_projectile_max_phys_radius", "Max projectile physical radius", "", 0, 0, 4095},
+	{"pac_sv_projectile_max_damage_radius", "Max projectile damage radius", "", 0, 0, 4095},
+	{"pac_sv_projectile_max_attract_radius", "Max projectile attract radius", "", 0, 0, 100000000},
+	{"pac_sv_projectile_max_damage", "Max projectile damage", "", 0, 0, 100000000},
+	{"pac_sv_projectile_max_speed", "Max projectile speed", "", 0, 0, 50000},
+	{"pac_sv_projectile_max_mass", "Max projectile mass", "", 0, 0, 500000},
+}
+local convar_params_health_modifier = {
+	{"pac_sv_health_modifier", "Allow health modifier part", "", -1, 0, 200},
+	{"pac_sv_health_modifier_allow_maxhp", "Allow changing max health and max armor", "", -1, 0, 200},
+	{"pac_sv_health_modifier_max_hp_armor", "Maximum value for max health / armor modification", "", 0, 0, 100000000},
+	{"pac_sv_health_modifier_min_damagescaling", "Minimum combined damage multiplier allowed.\nNegative values lead to healing from damage.", "", 2, -10, 1},
+	{"pac_sv_health_modifier_extra_bars", "Allow extra healthbars", "What are those? It's like an armor layer that takes damage before it gets applied to the entity.", -1, 0, 200},
+	{"pac_sv_health_modifier_allow_counted_hits", "Allow extra healthbars counted hits mode", "1 EX HP absorbs 1 whole hit.", -1, 0, 200},
+	{"pac_sv_health_modifier_max_extra_bars_value", "Maximum combined value for extra healthbars", "", 0, 0, 100000000},
+}
 
-local force_allow = CreateConVar("pac_sv_force", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow force parts serverside")
-local force_max_length = CreateConVar("pac_sv_force_max_length", "10000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "force part maximum length")
-local force_max_radius = CreateConVar("pac_sv_force_max_radius", "10000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "force part maximum radius")
-local force_max_amount = CreateConVar("pac_sv_force_max_amount", "10000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "force part maximum amount of force")
-
-local healthmod_allow = CreateConVar("pac_sv_health_modifier", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow health modifier parts serverside")
-local healthmod_allowed_extra_bars = CreateConVar("pac_sv_health_modifier_extra_bars", 1, CLIENT and {FCVAR_NOTIFY, FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow extra health bars")
-local healthmod_allow_change_maxhp = CreateConVar("pac_sv_health_modifier_allow_maxhp", 1, CLIENT and {FCVAR_NOTIFY, FCVAR_REPLICATED} or {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow players to change their maximum health and armor.")
-local healthmod_minimum_dmgscaling = CreateConVar("pac_sv_health_modifier_min_damagescaling", -1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Minimum health modifier amount. Negative values can heal.")
-
-local master_init_featureblocker = CreateConVar("pac_sv_block_combat_features_on_next_restart", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether to stop initializing the net receivers for the networking of PAC3 combat parts those selectively disabled. This requires a restart!\n0=initialize all the receivers\n1=disable those whose corresponding part cvar is disabled\n2=block all combat features\nAfter updating the sv cvars, you can still reinitialize the net receivers with pac_sv_combat_reinitialize_missing_receivers, but you cannot turn them off after they are turned on")
-
-local enforce_netrate = CreateConVar("pac_sv_combat_enforce_netrate", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "whether to enforce a limit on how often any pac combat net messages can be sent. 0 to disable, otherwise a number in mililiseconds.\nSee the related cvar pac_sv_combat_enforce_netrate_buffersize. That second convar is governed by this one, if the netrate enforcement is 0, the allowance doesn\"t matter")
-local netrate_allowance = CreateConVar("pac_sv_combat_enforce_netrate_buffersize", 60, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "the budgeted allowance to limit how many pac combat net messages can be sent in bursts. 0 to disable, otherwise a number of net messages of allowance.")
-local netrate_enforcement_sv_monitoring = CreateConVar("pac_sv_combat_enforce_netrate_monitor_serverside", 0, {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether or not to let clients enforce their net message rates.\nSet this to 1 to get serverside prints telling you whenever someone is going over their allowance, but it'll still take the network bandwidth.\nSet this to 0 to let clients enforce their net rate and save some bandwidth but the server won't know who's spamming net messages.")
-local raw_ent_limit = CreateConVar("pac_sv_entity_limit_per_combat_operation", 500, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Hard limit to drop any force or damage zone if more than this amount of entities is selected")
-local per_ply_limit = CreateConVar("pac_sv_entity_limit_per_player_per_combat_operation", 40, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Limit per player to drop any force or damage zone if this amount multiplied by each client is more than the hard limit")
-local player_fraction = CreateConVar("pac_sv_player_limit_as_fraction_to_drop_damage_zone", 1, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "The fraction (0.0-1.0) of players that will stop damage zone net messages if a damage zone order covers more than this fraction of the server's population, when there are more than 12 players covered")
-local enforce_distance = CreateConVar("pac_sv_combat_distance_enforced", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether to enforce a limit on how far a pac combat action can originate.\nIf set to a distance, it will prevent actions that are too far from the acting player.\n0 to disable.")
-
-
-local global_combat_whitelisting = CreateConVar("pac_sv_combat_whitelisting", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "How the server should decide which players are allowed to use the main PAC3 combat parts (lock, damagezone, force).\n0:Everyone is allowed unless the parts are disabled serverwide\n1:No one is allowed until they get verified as trustworthy\tpac_sv_whitelist_combat <playername>\n\tpac_sv_blacklist_combat <playername>")
-local global_combat_prop_protection = CreateConVar("pac_sv_prop_protection", 0, CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether players owned (created) entities (physics props and gmod contraption entities) will be considered in the consent calculations, protecting them. Without this cvar, only the player is protected.")
-
-
-include("pac3/editor/server/combat_bans.lua")
-
+local convar_params_modifiers = {
+	{"pac_modifier_blood_color", "Blood", "", -1, 0, 200},
+	{"pac_allow_mdl", "MDL", "", -1, 0, 200},
+	{"pac_allow_mdl_entity", "Entity MDL", "", -1, 0, 200},
+	{"pac_modifier_model", "Entity model", "", -1, 0, 200},
+	{"pac_modifier_size", "Entity size", "", -1, 0, 200},
+}
+local convar_params_movement = {
+	--the playermovement enabler policy cvar is a form, not a slider nor a bool
+	{"pac_player_movement_allow_mass", "Allow Modify Mass", "", -1, 0, 200},
+	{"pac_player_movement_min_mass", "Mimnimum mass players can set for themselves", "", 0, 0, 1000000},
+	{"pac_player_movement_max_mass", "Maximum mass players can set for themselves", "", 0, 0, 1000000},
+	{"pac_player_movement_physics_damage_scaling", "Allow damage scaling of physics damage based on player's mass", "", -1, 0, 200},
+}
+local convar_params_wearing_drawing = {
+	{"pac_sv_draw_distance", "PAC server draw distance", "", 0, 0, 500000},
+	{"pac_submit_spam", "Limit pac_submit to prevent spam", "", -1, 0, 200},
+	{"pac_submit_limit", "limit of pac_submits", "", 0, 0, 100},
+	{"pac_onuse_only_force", "Players need to +USE on others to reveal outfits", "", -1, 0, 200},
+	{"pac_sv_prop_outfits", "allow prop / other player outfits", "0 = don't allow\n1 = allow applying outfits on props/npcs\n2 = allow applying outfits on other players", 0, 0, 2},
+}
+local convar_params_misc = {
+	{"sv_pac_webcontent_allow_no_content_length", "Players need to +USE on others to reveal outfits", "", -1, 0, 200},
+	{"pac_to_contraption_allow", "Allow PAC to contraption tool", "", -1, 0, 200},
+	{"pac_max_contraption_entities", "Entity limit for PAC to contraption", "", 0, 0, 200},
+	{"pac_restrictions", "restrict PAC editor camera movement", "", -1, 0, 200},
+	{"pac_sv_nearest_life", "Allow nearest life aimparts or bones", "", -1, 0, 200},
+	{"pac_sv_nearest_life_allow_sampling_from_parts", "Allow NL sampling from anywhere", "", -1, 0, 200},
+	{"pac_sv_nearest_life_allow_bones", "Allow NL usage on bones", "", -1, 0, 200},
+	{"pac_sv_nearest_life_allow_targeting_players", "Allow NL targeting players", "", -1, 0, 200},
+	{"pac_sv_nearest_life_max_distance", "Max NL distance", "", 0, 0, 20000},
+}
 
 pace = pace
 
-pace.partmenu_categories_cedrics = 
-{
+pace.partmenu_categories_experimental = {
 	["new!"] =
 	{
 		["icon"]				=		"icon16/new.png",
-		["interpolated_multibone"]=	"interpolated_multibone",
+		["interpolated_multibone"] =	"interpolated_multibone",
 		["damage_zone"]			=	"damage_zone",
 		["hitscan"]				=	"hitscan",
 		["lock"]				=		"lock",
@@ -73,16 +122,16 @@ pace.partmenu_categories_cedrics =
 		["text"]				=		"text",
 		["link"]				=		"link",
 	},
-	["scaffolds"] = 
+	["scaffolds"] =
 	{
 		["tooltip"]				=	"useful to build up structures with specific positioning rules",
 		["icon"]				=		"map",
 		["jiggle"]				=	"jiggle",
 		["model2"]				=	"model2",
 		["projectile"]			=	"projectile",
-		["interpolated_multibone"]=	"interpolated_multibone",
+		["interpolated_multibone"] =	"interpolated_multibone",
 	},
-	["combat"] =  
+	["combat"] =
 	{
 		["icon"]				=		"icon16/joystick.png",
 		["damage_zone"]			=	"damage_zone",
@@ -103,16 +152,16 @@ pace.partmenu_categories_cedrics =
 		["sprite"]				=	"sprite",
 		["particle"]			=		"particle",
 	},
-	["materials"]=
+	["materials"] =
 	{
 		["icon"]				=		"pace.MiscIcons.appearance",
 		["material_3d"]			=	"material_3d",
 		["material_2d"]			=	"material_2d",
 		["material_refract"]	=		"material_refract",
-		["material_eye refract"]=		"material_eye refract",
+		["material_eye refract"] =		"material_eye refract",
 		["submaterial"]			=	"submaterial",
 	},
-	["entity"] = 
+	["entity"] =
 	{
 		["icon"]				=		"icon16/cd_go.png",
 		["bone3"]				=		"bone3",
@@ -132,7 +181,7 @@ pace.partmenu_categories_cedrics =
 		["material_3d"]		=		"material_3d",
 		["weapon"]			=		"weapon",
 	},
-	["model"] = 
+	["model"] =
 	{
 		["icon"]			=			"icon16/bricks.png",
 		["jiggle"]			=		"jiggle",
@@ -146,7 +195,7 @@ pace.partmenu_categories_cedrics =
 		["material_3d"]		=		"material_3d",
 		["model2"]			=		"model2",
 	},
-	["modifiers"] = 
+	["modifiers"] =
 	{
 		["icon"]			=			"icon16/connect.png",
 		["fog"]				=		"fog",
@@ -158,7 +207,7 @@ pace.partmenu_categories_cedrics =
 		["material_3d"]	=			"material_3d",
 		["proxy"]=						"proxy",
 	},
-	["effects"] = 
+	["effects"] =
 	{
 		["icon"]	=					"icon16/wand.png",
 		["sprite"]	=				"sprite",
@@ -179,7 +228,7 @@ pace.partmenu_categories_cedrics =
 	}
 }
 
-pace.partmenu_categories_default = 
+pace.partmenu_categories_default =
 {
 	["legacy"]=
 	{
@@ -196,21 +245,25 @@ pace.partmenu_categories_default =
 		["webaudio"]=		"webaudio",
 		["ogg"]	=	"ogg",
 	},
+	["combat"]=
+	{
+		["icon"]				=		pace.GroupsIcons.combat,
+		["lock"]=		"lock",
+		["force"]=		"force",
+		["projectile"]=		"projectile",
+		["damage_zone"]	=	"damage_zone",
+		["hitscan"]	=	"hitscan",
+		["health_modifier"]	=	"health_modifier",
+	},
 	["advanced"]=
 	{
 		["icon"]				=		pace.GroupsIcons.advanced,
-		["lock"]=		"lock",
-		["force"]=		"force",
 		["custom_animation"]=		"custom_animation",
 		["material_refract"]=		"material_refract",
 		["projectile"]=		"projectile",
 		["link"]	=	"link",
-		["damage_zone"]	=	"damage_zone",
-		["interpolated_multibone"]	=	"interpolated_multibone",
 		["material_2d"]	=	"material_2d",
 		["material_eye refract"]	=	"material_eye refract",
-		["hitscan"]	=	"hitscan",
-		["health_modifier"]	=	"health_modifier",
 		["command"]		="command",
 	},
 	["entity"]=
@@ -324,7 +377,7 @@ local function rebuild_bookmarks()
 	if not pace.bookmarked_ressources["proxy"] or table.IsEmpty(pace.bookmarked_ressources["proxy"]) then
 		pace.bookmarked_ressources["proxy"] = {
 			--[[["user"] = {
-				
+
 			},]]
 			["fades and transitions"] ={
 				{
@@ -338,7 +391,7 @@ local function rebuild_bookmarks()
 					explanation = "the simplest fade's reverse.\nthis is normalized, which means you'll often multiply this whole unit by the amount you want, like a distance.\ntimeex() starts at 1, moves gradually to 0 and stops progressing at 0 due to the clamp"
 				},
 				{
-					nicename = "standard clamp fade (delayed in)", 
+					nicename = "standard clamp fade (delayed in)",
 					expression = "clamp(-1 + timeex(),0,1)",
 					explanation = "the basic fade is delayed by the fact that the clamp makes sure the negative values are pulled back to 0 until the first argument crosses 0 into the clamp's range."
 				},
@@ -515,7 +568,7 @@ local function rebuild_bookmarks()
 				}
 			}
 		}
-		
+
 	end
 
 end
@@ -529,16 +582,16 @@ local function encode_table_to_file(str)
 	local data = {}
 	if not file.Exists("pac3_config", "DATA") then
 		file.CreateDir("pac3_config")
-		
+
 	end
-	
+
 
 	if str == "pac_editor_shortcuts" then
 		data = pace.PACActionShortcut
 		file.Write("pac3_config/" .. str..".txt", util.TableToKeyValues(data))
 	elseif str == "pac_editor_partmenu_layouts" then
 		data = pace.operations_order
-		file.Write("pac3_config/" .. str..".txt", util.TableToJSON(data))
+		file.Write("pac3_config/" .. str..".txt", util.TableToJSON(data, true))
 	elseif str == "pac_part_categories" then
 		data = pace.partgroups
 		file.Write("pac3_config/" .. str..".txt", util.TableToKeyValues(data))
@@ -551,7 +604,10 @@ local function encode_table_to_file(str)
 		end
 	elseif str == "eventwheel_colors" then
 		data = pace.command_colors or {}
-		file.Write("pac3_config/" .. str..".txt", util.TableToKeyValues(data))
+		file.Write("pac3_config/" .. str..".txt", util.TableToJSON(data, true))
+	elseif str == "pinned_properties" then
+		data = pace.pinned_properties or {}
+		file.Write("pac3_config/" .. str..".txt", util.TableToJSON(data, true))
 	end
 
 end
@@ -575,12 +631,20 @@ local function decode_table_from_file(str)
 
 	elseif str == "pac_editor_partmenu_layouts" then
 		pace.operations_order = util.JSONToTable(data)
-		
+
 	elseif str == "pac_part_categories" then
-		pace.partgroups = util.KeyValuesToTable(data)
-	
+		pace.partgroups = util.KeyValuesToTable(data, false, true)
+ 
 	elseif str == "eventwheel_colors" then
-		pace.command_colors = util.KeyValuesToTable(data)
+		if not util.JSONToTable(data) then
+			if not table.IsEmpty(util.KeyValuesToTable(data)) then
+				pace.command_colors = util.KeyValuesToTable(data)
+			end
+		else
+			pace.command_colors = util.JSONToTable(data)
+		end
+	elseif str == "pinned_properties" then
+		pace.pinned_properties = util.JSONToTable(data, false, true)
 	end
 
 
@@ -620,32 +684,62 @@ function PANEL:Init()
 
 		local combat_ban_settings = pace.FillCombatBanPanel(master_pnl)
 		master_pnl:AddSheet("Combat Bans (SV)", combat_ban_settings)
-		
+		net.Start("pac_request_sv_cvars") net.SendToServer()
 	end
-	
-	
+
+
 	self.sheet = master_pnl
-	
+
 	--local properties_shortcuts = pace.FillShortcutSettings(pnl)
 	--pnl:AddSheet("Editor Shortcuts", properties_shortcuts)
 end
 
 vgui.Register( "pace_settings", PANEL, "DPanel" )
 
-function pace.OpenSettings()
+function pace.OpenSettings(tab)
 	if IsValid(pace.settings_panel) then
 		pace.settings_panel:Remove()
 	end
 	local pnl = vgui.Create("DFrame")
 	pnl:SetTitle("pac settings")
 	pace.settings_panel = pnl
-	pnl:SetSize(800,600)
+	pnl:SetSize(900,600)
 	pnl:MakePopup()
 	pnl:Center()
 	pnl:SetSizable(true)
-
+	pnl.OnClose = function()
+		if LocalPlayer():IsAdmin() and pace.cvar_changes then
+			local changes_str = ""
+			for cmd, val in pairs(pace.cvar_changes) do
+				if isbool(val) then
+					changes_str = changes_str .. cmd .. " set to " ..  (val and "1" or "0") .. "\n"
+				else
+					changes_str = changes_str .. cmd .. " set to " ..  val .. "\n"
+				end
+			end
+			Derma_Query("Send changes to the server?\n"..changes_str,table.Count(pace.cvar_changes) .. " server convars changed",
+				"Send changes to server", function()
+					for cmd, val in pairs(pace.cvar_changes) do
+						net.Start("pac_send_sv_cvar")
+						net.WriteString(cmd)
+						if isbool(val) then
+							net.WriteString(val and "1" or "0")
+						else
+							net.WriteString(val)
+						end
+						net.SendToServer()
+					end
+					pace.cvar_changes = nil
+				end,
+				"Cancel", function() pace.cvar_changes = nil end)
+		end
+	end
+	timer.Simple(0.5, function() pace.cvar_changes = nil end)
 	local pnl = vgui.Create("pace_settings", pnl)
 	pnl:Dock(FILL)
+	if tab then
+		pnl.sheet:SwitchToName(tab)
+	end
 end
 
 concommand.Add("pace_settings", function()
@@ -662,7 +756,7 @@ function pace.FillBanPanel(pnl)
 		ban_list:SetText("ban list")
 		ban_list:SetSize(400,400)
 		ban_list:SetPos(10,10)
-	
+
 		ban_list:AddColumn("Player name")
 		ban_list:AddColumn("SteamID")
 		ban_list:AddColumn("State")
@@ -682,10 +776,10 @@ function pace.FillBanPanel(pnl)
 			ply_state_list[player.GetBySteamID(line:GetColumnText( 2 ))] = state
 			PrintTable(ply_state_list)
 		end
-	
+
 	local ban_confirm_list_button = vgui.Create("DButton", BAN)
 		ban_confirm_list_button:SetText("Send ban list update to server")
-		
+
 		ban_confirm_list_button:SetTooltip("WARNING! Unauthorized use will be notified to the server!")
 		ban_confirm_list_button:SetColor(Color(255,0,0))
 		ban_confirm_list_button:SetSize(200, 40)
@@ -700,7 +794,7 @@ function pace.FillBanPanel(pnl)
 		--ban_request_list_button:SetColor(Color(255,0,0))
 		ban_request_list_button:SetSize(200, 40)
 		ban_request_list_button:SetPos(450, 60)
-		
+
 		function ban_request_list_button:DoClick()
 			net.Start("pac.RequestBanStates")
 			net.SendToServer()
@@ -711,7 +805,7 @@ function pace.FillBanPanel(pnl)
 			player_ban_list = players
 			PrintTable(players)
 		end)
-		
+
 
 	return BAN
 end
@@ -720,13 +814,13 @@ function pace.FillCombatBanPanel(pnl)
 	local pnl = pnl
 	local BAN = vgui.Create("DPanel", pnl)
 	pac.global_combat_whitelist = pac.global_combat_whitelist or {}
-	
+
 
 	local ban_list = vgui.Create("DListView", BAN)
 		ban_list:SetText("Combat ban list")
 		ban_list:SetSize(400,400)
 		ban_list:SetPos(10,10)
-	
+
 		ban_list:AddColumn("Player name")
 		ban_list:AddColumn("SteamID")
 		ban_list:AddColumn("State")
@@ -746,7 +840,7 @@ function pace.FillCombatBanPanel(pnl)
 		for id,data in pairs(pac.global_combat_whitelist) do
 			combat_bans_temp_merger[id] = data
 		end
-		
+
 		for id,data in pairs(combat_bans_temp_merger) do
 			ban_list:AddLine(data.nick,data.steamid,data.permission)
 		end
@@ -762,10 +856,10 @@ function pace.FillCombatBanPanel(pnl)
 			pac.global_combat_whitelist[string.lower(line:GetColumnText( 2 ))].permission = state
 			PrintTable(pac.global_combat_whitelist)
 		end
-	
+
 	local ban_confirm_list_button = vgui.Create("DButton", BAN)
 		ban_confirm_list_button:SetText("Send combat ban list update to server")
-		
+
 		ban_confirm_list_button:SetTooltip("WARNING! Unauthorized use will be notified to the server!")
 		ban_confirm_list_button:SetColor(Color(255,0,0))
 		ban_confirm_list_button:SetSize(200, 40)
@@ -799,7 +893,7 @@ function pace.FillCombatBanPanel(pnl)
 			for id,data in pairs(pac.global_combat_whitelist) do
 				combat_bans_temp_merger[id] = data
 			end
-			
+
 			for id,data in pairs(combat_bans_temp_merger) do
 				ban_list:AddLine(data.nick,data.steamid,data.permission)
 			end
@@ -808,344 +902,76 @@ function pace.FillCombatBanPanel(pnl)
 
 	return BAN
 end
+local cvar_panels = {}
+
+
+local function PopulateCategory(str, pnl, cvars_tbl)
+	--create a collapsible header category
+	local list = pnl:Add(str)
+	list.Header:SetSize(40,40)
+	list.Header:SetFont("DermaLarge")
+	local list_list = vgui.Create("DListLayout")
+	list_list:DockPadding(20,0,20,20)
+	list:SetContents(list_list)
+
+	--insert the cvars for the category
+	for i, tbl in ipairs(cvars_tbl) do
+		local cvar_pnl
+		if tbl[4] == -1 then
+			cvar_pnl = vgui.Create("DCheckBoxLabel", list_list)
+			cvar_pnl.OnChange = function(self, val)
+				pace.cvar_changes = pace.cvar_changes or {}
+				pace.cvar_changes[tbl[1]] = val
+			end
+		else
+			cvar_pnl = vgui.Create("DNumSlider", list_list)
+			cvar_pnl:SetDecimals(tbl[4])
+			cvar_pnl:SetMin(tbl[5])
+			cvar_pnl:SetMax(tbl[6])
+			cvar_pnl.OnValueChanged = function(self, val)
+				pace.cvar_changes = pace.cvar_changes or {}
+				pace.cvar_changes[tbl[1]] = val
+			end
+		end
+		cvar_panels[tbl[1]] = cvar_pnl
+		cvar_pnl:SetText(tbl[2])
+		if tbl[3] ~= "" then cvar_pnl:SetTooltip(tbl[3]) end
+		cvar_pnl:SetSize(400,30)
+
+	end
+	return list_list
+end
+
+net.Receive("pac_send_cvars_to_client", function()
+	local cvars_tbl = net.ReadTable()
+	for cmd, val in pairs(cvars_tbl) do
+		if cvar_panels[cmd] then
+			--print("cvar exists " .. cmd .. " = " .. val)
+			cvar_panels[cmd]:SetValue(val)
+		else
+			--print("wrong cvar? " .. cmd)
+		end
+	end
+	pace.cvar_changes = nil
+end)
 
 function pace.FillCombatSettings(pnl)
 	local pnl = pnl
 
 	local master_list = vgui.Create("DCategoryList", pnl)
 	master_list:Dock(FILL)
+
 	--general
-	do
-		local general_list = master_list:Add("General (Global policy and Network protection)")
-		general_list.Header:SetSize(40,40)
-		general_list.Header:SetFont("DermaLarge")
-		local general_list_list = vgui.Create("DListLayout")
-		general_list_list:DockPadding(20,0,20,20)
-		general_list:SetContents(general_list_list)
+	PopulateCategory("General (Global policy and Network protections)", master_list, convar_params_combat_generic)
 
-		local sv_prop_protection_props_box = vgui.Create("DCheckBoxLabel", general_list_list)
-			sv_prop_protection_props_box:SetText("Enforce generic prop protection for player-owned props and physics entities.\nRelated to client consents, but the policies for each part are not uniform.")
-			sv_prop_protection_props_box:SetSize(400,30)
-			sv_prop_protection_props_box:SetConVar("pac_sv_prop_protection")
+	--combat parts
+	PopulateCategory("Force part", master_list, convar_params_force)
+	PopulateCategory("Damage Zone", master_list, convar_params_damage_zone)
+	PopulateCategory("Lock part", master_list, convar_params_lock)
+	PopulateCategory("Hitscan part", master_list, convar_params_hitscan)
+	PopulateCategory("Projectiles", master_list, convar_params_projectile)
+	PopulateCategory("Health modifier part", master_list, convar_params_health_modifier)
 
-
-		local sv_combat_whitelisting_box = vgui.Create("DCheckBoxLabel", general_list_list)
-			sv_combat_whitelisting_box:SetText("Restrict new pac3 combat (damage zone, lock, force, hitscan, health modifier) to only whitelisted users.")
-			sv_combat_whitelisting_box:SetSize(400,30)
-			sv_combat_whitelisting_box:SetConVar("pac_sv_combat_whitelisting")
-			sv_combat_whitelisting_box:SetTooltip("off = Blacklist mode: Default players are allowed to use the combat features\non = Whitelist mode: Default players aren't allowed to use the combat features until set to Allowed")
-
-		local sv_master_break_box = vgui.Create("DCheckBoxLabel", general_list_list)
-			sv_master_break_box:SetText("Block the combat features that aren't enabled. WARNING! Requires a restart!\nThis applies to damage zone, lock, force, hitscan and health modifier parts")
-			sv_master_break_box:SetSize(400,30)
-			sv_master_break_box:SetConVar("pac_sv_block_combat_features_on_next_restart")
-			sv_master_break_box:SetTooltip("You can go to the console and set pac_sv_block_combat_features_on_next_restart to 2 to block everything.\nif you re-enable a blocked part, update with pac_sv_combat_reinitialize_missing_receivers")
-
-		local sv_netrate_monitoring_box = vgui.Create("DCheckBoxLabel", general_list_list)
-			sv_netrate_monitoring_box:SetText("Enable serverside monitoring prints for allowance and rate limiters")
-			sv_netrate_monitoring_box:SetSize(400,30)
-			sv_netrate_monitoring_box:SetConVar("pac_sv_combat_enforce_netrate_monitor_serverside")
-			sv_netrate_monitoring_box:SetTooltip("Enable serverside monitoring prints.\n0=let clients enforce their netrate allowance before sending messages\n1=the server will receive net messages and print the outcome.")
-
-		local sv_netrate_time_numbox = vgui.Create("DNumSlider", general_list_list)
-			sv_netrate_time_numbox:SetText("Rate limiter (milliseconds)")
-			sv_netrate_time_numbox:SetValue(GetConVar("pac_sv_combat_enforce_netrate"):GetInt())
-			sv_netrate_time_numbox:SetMin(0) sv_netrate_time_numbox:SetDecimals(0) sv_netrate_time_numbox:SetMax(1000)
-			sv_netrate_time_numbox:SetSize(400,30)
-			sv_netrate_time_numbox:SetConVar("pac_sv_combat_enforce_netrate")
-			sv_netrate_time_numbox:SetTooltip("The milliseconds delay between net messages.\nIf this is 0, the allowance won't matter, otherwise early net messages use up the player's allowance.\nThe allowance regenerates gradually when unused, and one unit gets spent if the message is earlier than the rate limiter's delay.")
-
-		local sv_netrate_buffer_numbox = vgui.Create("DNumSlider", general_list_list)
-			sv_netrate_buffer_numbox:SetText("Allowance, in number of messages")
-			sv_netrate_buffer_numbox:SetValue(GetConVar("pac_sv_combat_enforce_netrate_buffersize"):GetInt())
-			sv_netrate_buffer_numbox:SetMin(0) sv_netrate_buffer_numbox:SetDecimals(0) sv_netrate_buffer_numbox:SetMax(400)
-			sv_netrate_buffer_numbox:SetSize(400,30)
-			sv_netrate_buffer_numbox:SetConVar("pac_sv_combat_enforce_netrate_buffersize")
-			sv_netrate_buffer_numbox:SetTooltip("Allowance:\nIf this is 0, only the time limiter will stop pac combat messages if they're too fast.\nOtherwise, players trying to use a pac combat message earlier will deduct 1 from the player's allowance, and only stop the messages if the allowance reaches 0.")
-
-		local sv_hard_ent_limit_numbox = vgui.Create("DNumSlider", general_list_list)
-			sv_hard_ent_limit_numbox:SetText("Hard entity limit to cutoff damage zones and force parts")
-			sv_hard_ent_limit_numbox:SetValue(GetConVar("pac_sv_entity_limit_per_combat_operation"):GetInt())
-			sv_hard_ent_limit_numbox:SetMin(0) sv_hard_ent_limit_numbox:SetDecimals(0) sv_hard_ent_limit_numbox:SetMax(1000)
-			sv_hard_ent_limit_numbox:SetSize(400,30)
-			sv_hard_ent_limit_numbox:SetConVar("pac_sv_entity_limit_per_combat_operation")
-			sv_hard_ent_limit_numbox:SetTooltip("If the number of entities selected is more than this value, the whole operation gets dropped.\nThis is so that the server doesn't have to send huge amounts of entity updates to everyone.")
-		
-		local sv_per_player_ent_limit_numbox = vgui.Create("DNumSlider", general_list_list)
-			sv_per_player_ent_limit_numbox:SetText("Entity limit per player to cutoff damage zones and force parts")
-			sv_per_player_ent_limit_numbox:SetValue(GetConVar("pac_sv_entity_limit_per_player_per_combat_operation"):GetInt())
-			sv_per_player_ent_limit_numbox:SetMin(0) sv_per_player_ent_limit_numbox:SetDecimals(0) sv_per_player_ent_limit_numbox:SetMax(500)
-			sv_per_player_ent_limit_numbox:SetSize(400,30)
-			sv_per_player_ent_limit_numbox:SetConVar("pac_sv_entity_limit_per_player_per_combat_operation")
-			sv_per_player_ent_limit_numbox:SetTooltip("When in multiplayer, with the server's player count, if the number of entities selected is more than this value, the whole operation gets dropped.\nThis is so that the server doesn't have to send huge amounts of entity updates to everyone.")
-
-		local sv_player_fraction_slider = vgui.Create("DNumSlider", general_list_list)
-			sv_player_fraction_slider:SetText("block damage zones targeting this fraction of players")
-			sv_player_fraction_slider:SetValue(GetConVar("pac_sv_player_limit_as_fraction_to_drop_damage_zone"):GetFloat())
-			sv_player_fraction_slider:SetMin(0) sv_player_fraction_slider:SetDecimals(2) sv_player_fraction_slider:SetMax(1)
-			sv_player_fraction_slider:SetSize(400,30)
-			sv_player_fraction_slider:SetConVar("pac_sv_player_limit_as_fraction_to_drop_damage_zone")
-			sv_player_fraction_slider:SetTooltip("This applies when the zone covers more than 12 players. 0 is 0% of the server, 1 is 100%\nFor example, if this is at 0.5, there are 24 players and a damage zone covers 13 players, it will be blocked.")
-		
-		local sv_distance_slider = vgui.Create("DNumSlider", general_list_list)
-			sv_distance_slider:SetText("distance to block combat actions that are too far")
-			sv_distance_slider:SetValue(GetConVar("pac_sv_combat_distance_enforced"):GetFloat())
-			sv_distance_slider:SetMin(0) sv_distance_slider:SetDecimals(0) sv_distance_slider:SetMax(64000)
-			sv_distance_slider:SetSize(400,30)
-			sv_distance_slider:SetConVar("pac_sv_combat_distance_enforced")
-			sv_distance_slider:SetTooltip("The distance is compared between the action's origin and the player's position.\n0 to ignore.")
-		
-	end
-
-	do --hitscan
-		--[[
-			pac_sv_hitscan
-			pac_sv_hitscan_max_bullets
-			pac_sv_hitscan_max_damage
-			pac_sv_hitscan_divide_max_damage_by_max_bullets
-		]]
-
-		local hitscans_list = master_list:Add("Hitscans")
-		hitscans_list.Header:SetSize(40,40)
-		hitscans_list.Header:SetFont("DermaLarge")
-		local hitscans_list_list = vgui.Create("DListLayout")
-		hitscans_list_list:DockPadding(20,0,20,20)
-		hitscans_list:SetContents(hitscans_list_list)
-
-		local sv_hitscans_box = vgui.Create("DCheckBoxLabel", hitscans_list_list)
-			sv_hitscans_box:SetText("allow serverside bullets")
-			sv_hitscans_box:SetSize(400,30)
-			sv_hitscans_box:SetConVar("pac_sv_hitscan")
-
-		local hitscans_max_dmg_numbox = vgui.Create("DNumSlider", hitscans_list_list)
-			hitscans_max_dmg_numbox:SetText("Max hitscan damage (per bullet, per multishot,\ndepending on the next setting)")
-			hitscans_max_dmg_numbox:SetValue(GetConVar("pac_sv_hitscan_max_damage"):GetInt())
-			hitscans_max_dmg_numbox:SetMin(0) hitscans_max_dmg_numbox:SetDecimals(0) hitscans_max_dmg_numbox:SetMax(268435455)
-			hitscans_max_dmg_numbox:SetSize(400,30)
-			hitscans_max_dmg_numbox:SetConVar("pac_sv_hitscan_max_damage")
-
-		local sv_hitscans_distribute_box = vgui.Create("DCheckBoxLabel", hitscans_list_list)
-			sv_hitscans_distribute_box:SetText("force hitscans to distribute their total damage accross bullets. if off, every bullet does full damage; if on, adding more bullets doesn't do more damage")
-			sv_hitscans_distribute_box:SetSize(400,30)
-			sv_hitscans_distribute_box:SetConVar("pac_sv_hitscan_divide_max_damage_by_max_bullets")
-
-		local hitscans_max_numbullets_numbox = vgui.Create("DNumSlider", hitscans_list_list)
-			hitscans_max_numbullets_numbox:SetText("Maximum number of bullets for hitscan multishots")
-			hitscans_max_numbullets_numbox:SetValue(GetConVar("pac_sv_hitscan_max_bullets"):GetInt())
-			hitscans_max_numbullets_numbox:SetMin(1) hitscans_max_numbullets_numbox:SetDecimals(0) hitscans_max_numbullets_numbox:SetMax(500)
-			hitscans_max_numbullets_numbox:SetSize(400,30)
-			hitscans_max_numbullets_numbox:SetConVar("pac_sv_hitscan_max_bullets")
-	end
-
-	do --projectiles
-		local projectiles_list = master_list:Add("Projectiles")
-		projectiles_list.Header:SetSize(40,40)
-		projectiles_list.Header:SetFont("DermaLarge")
-		local projectiles_list_list = vgui.Create("DListLayout")
-		projectiles_list_list:DockPadding(20,0,20,20)
-		projectiles_list:SetContents(projectiles_list_list)
-
-		local sv_projectiles_box = vgui.Create("DCheckBoxLabel", projectiles_list_list)
-			sv_projectiles_box:SetText("allow serverside physical projectiles")
-			sv_projectiles_box:SetSize(400,30)
-			sv_projectiles_box:SetConVar("pac_sv_projectiles")
-
-		local projectile_max_phys_radius_numbox = vgui.Create("DNumSlider", projectiles_list_list)
-			projectile_max_phys_radius_numbox:SetText("Max projectile physical radius")
-			projectile_max_phys_radius_numbox:SetValue(GetConVar("pac_sv_projectile_max_phys_radius"):GetInt())
-			projectile_max_phys_radius_numbox:SetMin(0) projectile_max_phys_radius_numbox:SetDecimals(0) projectile_max_phys_radius_numbox:SetMax(1000)
-			projectile_max_phys_radius_numbox:SetSize(400,30)
-			projectile_max_phys_radius_numbox:SetConVar("pac_sv_projectile_max_phys_radius")
-
-		local projectile_max_dmg_radius_numbox = vgui.Create("DNumSlider", projectiles_list_list)
-			projectile_max_dmg_radius_numbox:SetText("Max projectile damage radius")
-			projectile_max_dmg_radius_numbox:SetValue(GetConVar("pac_sv_projectile_max_damage_radius"):GetInt())
-			projectile_max_dmg_radius_numbox:SetMin(0) projectile_max_dmg_radius_numbox:SetDecimals(0) projectile_max_dmg_radius_numbox:SetMax(5000)
-			projectile_max_dmg_radius_numbox:SetSize(400,30)
-			projectile_max_dmg_radius_numbox:SetConVar("pac_sv_projectile_max_damage_radius")
-
-		local projectile_max_attract_radius_numbox = vgui.Create("DNumSlider", projectiles_list_list)
-			projectile_max_attract_radius_numbox:SetText("Max projectile attract radius")
-			projectile_max_attract_radius_numbox:SetValue(GetConVar("pac_sv_projectile_max_attract_radius"):GetInt())
-			projectile_max_attract_radius_numbox:SetMin(0) projectile_max_attract_radius_numbox:SetDecimals(0) projectile_max_attract_radius_numbox:SetMax(100000000)
-			projectile_max_attract_radius_numbox:SetSize(400,30)
-			projectile_max_attract_radius_numbox:SetConVar("pac_sv_projectile_max_attract_radius")
-
-		local projectile_max_dmg_numbox = vgui.Create("DNumSlider", projectiles_list_list)
-			projectile_max_dmg_numbox:SetText("Max projectile damage")
-			projectile_max_dmg_numbox:SetValue(GetConVar("pac_sv_projectile_max_damage"):GetInt())
-			projectile_max_dmg_numbox:SetMin(0) projectile_max_dmg_numbox:SetDecimals(0) projectile_max_dmg_numbox:SetMax(100000000)
-			projectile_max_dmg_numbox:SetSize(400,30)
-			projectile_max_dmg_numbox:SetConVar("pac_sv_projectile_max_damage")
-
-		local projectile_max_speed_numbox = vgui.Create("DNumSlider", projectiles_list_list)
-			projectile_max_speed_numbox:SetText("Max projectile speed")
-			projectile_max_speed_numbox:SetValue(GetConVar("pac_sv_projectile_max_speed"):GetInt())
-			projectile_max_speed_numbox:SetMin(0) projectile_max_speed_numbox:SetDecimals(0) projectile_max_speed_numbox:SetMax(50000)
-			projectile_max_speed_numbox:SetSize(400,30)
-			projectile_max_speed_numbox:SetConVar("pac_sv_projectile_max_speed")
-
-		local projectile_max_mass_numbox = vgui.Create("DNumSlider", projectiles_list_list)
-			projectile_max_mass_numbox:SetText("Max projectile mass")
-			projectile_max_mass_numbox:SetValue(GetConVar("pac_sv_projectile_max_mass"):GetInt())
-			projectile_max_mass_numbox:SetMin(0) projectile_max_mass_numbox:SetDecimals(0) projectile_max_mass_numbox:SetMax(500000)
-			projectile_max_mass_numbox:SetSize(400,30)
-			projectile_max_mass_numbox:SetConVar("pac_sv_projectile_max_mass")
-	end
-
-	do --damage zone
-		local damagezone_list = master_list:Add("Damage Zone")
-			damagezone_list.Header:SetSize(40,40)
-			damagezone_list.Header:SetFont("DermaLarge")
-			local damagezone_list_list = vgui.Create("DListLayout")
-			damagezone_list_list:DockPadding(20,0,20,20)
-			damagezone_list:SetContents(damagezone_list_list)
-
-		local sv_dmgzone_box = vgui.Create("DCheckBoxLabel", damagezone_list_list)
-			sv_dmgzone_box:SetText("Allow damage zone")
-			sv_dmgzone_box:SetSize(400,30)
-			sv_dmgzone_box:SetConVar("pac_sv_damage_zone")
-
-		local max_dmgzone_radius_numbox = vgui.Create("DNumSlider", damagezone_list_list)
-			max_dmgzone_radius_numbox:SetText("Max damage zone radius")
-			max_dmgzone_radius_numbox:SetValue(GetConVar("pac_sv_damage_zone_max_radius"):GetInt())
-			max_dmgzone_radius_numbox:SetMin(0) max_dmgzone_radius_numbox:SetDecimals(0) max_dmgzone_radius_numbox:SetMax(32767)
-			max_dmgzone_radius_numbox:SetSize(400,30)
-			max_dmgzone_radius_numbox:SetConVar("pac_sv_damage_zone_max_radius")
-
-		local max_dmgzone_length_numbox = vgui.Create("DNumSlider", damagezone_list_list)
-			max_dmgzone_length_numbox:SetText("Max damage zone length")
-			max_dmgzone_length_numbox:SetValue(GetConVar("pac_sv_damage_zone_max_length"):GetInt())
-			max_dmgzone_length_numbox:SetMin(0) max_dmgzone_length_numbox:SetDecimals(0) max_dmgzone_length_numbox:SetMax(32767)
-			max_dmgzone_length_numbox:SetSize(400,30)
-			max_dmgzone_length_numbox:SetConVar("pac_sv_damage_zone_max_length")
-
-		local max_dmgzone_damage_numbox = vgui.Create("DNumSlider", damagezone_list_list)
-			max_dmgzone_damage_numbox:SetText("Max damage zone damage")
-			max_dmgzone_damage_numbox:SetValue(GetConVar("pac_sv_damage_zone_max_damage"):GetInt())
-			max_dmgzone_damage_numbox:SetMin(0) max_dmgzone_damage_numbox:SetDecimals(0) max_dmgzone_damage_numbox:SetMax(268435455)
-			max_dmgzone_damage_numbox:SetSize(400,30)
-			max_dmgzone_damage_numbox:SetConVar("pac_sv_damage_zone_max_damage")
-
-		local sv_dmgzone_allow_dissolve_box = vgui.Create("DCheckBoxLabel", damagezone_list_list)
-			sv_dmgzone_allow_dissolve_box:SetText("Allow damage entity dissolvers")
-			sv_dmgzone_allow_dissolve_box:SetSize(400,30)
-			sv_dmgzone_allow_dissolve_box:SetConVar("pac_sv_damage_zone_allow_dissolve")
-			
-	end
-
-	do --lock part
-		local lock_list = master_list:Add("Lock part")
-			lock_list.Header:SetSize(40,40)
-			lock_list.Header:SetFont("DermaLarge")
-			local lock_list_list = vgui.Create("DListLayout")
-			lock_list_list:DockPadding(20,0,20,20)
-			lock_list:SetContents(lock_list_list)
-
-		local sv_lock_allow_box = vgui.Create("DCheckBoxLabel", lock_list_list)
-			sv_lock_allow_box:SetText("Allow lock part")
-			sv_lock_allow_box:SetSize(400,30)
-			sv_lock_allow_box:SetConVar("pac_sv_lock")
-		
-		local sv_lock_grab_box = vgui.Create("DCheckBoxLabel", lock_list_list)
-			sv_lock_grab_box:SetText("Allow lock part grabbing")
-			sv_lock_grab_box:SetSize(400,30)
-			sv_lock_grab_box:SetConVar("pac_sv_lock_grab")
-
-		local sv_lock_grab_ply_box = vgui.Create("DCheckBoxLabel", lock_list_list)
-			sv_lock_grab_ply_box:SetText("Allow grabbing players")
-			sv_lock_grab_ply_box:SetSize(400,30)
-			sv_lock_grab_ply_box:SetConVar("pac_sv_lock_allow_grab_ply")
-
-		local sv_lock_grab_npc_box = vgui.Create("DCheckBoxLabel", lock_list_list)
-			sv_lock_grab_npc_box:SetText("Allow grabbing NPCs")
-			sv_lock_grab_npc_box:SetSize(400,30)
-			sv_lock_grab_npc_box:SetConVar("pac_sv_lock_allow_grab_npc")
-
-		local sv_lock_grab_ents_box = vgui.Create("DCheckBoxLabel", lock_list_list)
-			sv_lock_grab_ents_box:SetText("Allow grabbing other entities")
-			sv_lock_grab_ents_box:SetSize(400,30)
-			sv_lock_grab_ents_box:SetConVar("pac_sv_lock_allow_grab_ent")
-
-		local sv_lock_teleport_box = vgui.Create("DCheckBoxLabel", lock_list_list)
-			sv_lock_teleport_box:SetText("Allow lock part teleportation")
-			sv_lock_teleport_box:SetSize(400,30)
-			sv_lock_teleport_box:SetConVar("pac_sv_lock_teleport")
-
-		local max_lock_radius_numbox = vgui.Create("DNumSlider", lock_list_list)
-			max_lock_radius_numbox:SetText("Max lock part grab range")
-			max_lock_radius_numbox:SetValue(GetConVar("pac_sv_lock_max_grab_radius"):GetInt())
-			max_lock_radius_numbox:SetMin(0) max_lock_radius_numbox:SetDecimals(0) max_lock_radius_numbox:SetMax(5000)
-			max_lock_radius_numbox:SetSize(400,30)
-			max_lock_radius_numbox:SetConVar("pac_sv_lock_max_grab_radius")
-	end
-
-	do --force
-		local force_list = master_list:Add("Force part")
-			force_list.Header:SetSize(40,40)
-			force_list.Header:SetFont("DermaLarge")
-			local force_list_list = vgui.Create("DListLayout")
-			force_list_list:DockPadding(20,0,20,20)
-			force_list:SetContents(force_list_list)
-
-		local sv_force_box = vgui.Create("DCheckBoxLabel", force_list_list)
-			sv_force_box:SetText("Allow force part")
-			sv_force_box:SetSize(400,30)
-			sv_force_box:SetConVar("pac_sv_force")
-
-		local max_force_radius_numbox = vgui.Create("DNumSlider", force_list_list)
-			max_force_radius_numbox:SetText("Max force part radius")
-			max_force_radius_numbox:SetValue(GetConVar("pac_sv_force_max_radius"):GetInt())
-			max_force_radius_numbox:SetMin(0) max_force_radius_numbox:SetDecimals(0) max_force_radius_numbox:SetMax(32767)
-			max_force_radius_numbox:SetSize(400,30)
-			max_force_radius_numbox:SetConVar("pac_sv_force_max_radius")
-
-		local max_force_length_numbox = vgui.Create("DNumSlider", force_list_list)
-			max_force_length_numbox:SetText("Max force part length")
-			max_force_length_numbox:SetValue(GetConVar("pac_sv_force_max_length"):GetInt())
-			max_force_length_numbox:SetMin(0) max_force_length_numbox:SetDecimals(0) max_force_length_numbox:SetMax(32767)
-			max_force_length_numbox:SetSize(400,30)
-			max_force_length_numbox:SetConVar("pac_sv_force_max_length")
-
-		local max_force_amount_numbox = vgui.Create("DNumSlider", force_list_list)
-			max_force_amount_numbox:SetText("Max force part amount")
-			max_force_amount_numbox:SetValue(GetConVar("pac_sv_force_max_amount"):GetInt())
-			max_force_amount_numbox:SetMin(0) max_force_amount_numbox:SetDecimals(0) max_force_amount_numbox:SetMax(10000000)
-			max_force_amount_numbox:SetSize(400,30)
-			max_force_amount_numbox:SetConVar("pac_sv_force_max_amount")
-	end
-
-	do --health_modifier
-		local healthmod_list = master_list:Add("Health modifier part")
-		healthmod_list.Header:SetSize(40,40)
-		healthmod_list.Header:SetFont("DermaLarge")
-		local healthmod_list_list = vgui.Create("DListLayout")
-		healthmod_list_list:DockPadding(20,0,20,20)
-		healthmod_list:SetContents(healthmod_list_list)
-
-		local sv_healthmod_box = vgui.Create("DCheckBoxLabel", healthmod_list_list)
-			sv_healthmod_box:SetText("Allow health modifier part")
-			sv_healthmod_box:SetSize(400,30)
-			sv_healthmod_box:SetConVar("pac_sv_health_modifier")
-
-		local healthmod_extrabars_box = vgui.Create("DCheckBoxLabel", healthmod_list_list)
-			healthmod_extrabars_box:SetText("Allow changing max health and max armor")
-			healthmod_extrabars_box:SetSize(400,30)
-			healthmod_extrabars_box:SetConVar("pac_sv_health_modifier_allow_maxhp")
-
-		local min_healthmod_dmgmult_box = vgui.Create("DNumSlider", healthmod_list_list)
-			min_healthmod_dmgmult_box:SetText("Minimum combined damage multiplier allowed.\nNegative values lead to healing from damage.")
-			min_healthmod_dmgmult_box:SetValue(GetConVar("pac_sv_health_modifier_min_damagescaling"):GetInt())
-			min_healthmod_dmgmult_box:SetMin(-10) min_healthmod_dmgmult_box:SetDecimals(2) min_healthmod_dmgmult_box:SetMax(1)
-			min_healthmod_dmgmult_box:SetSize(400,30)
-			min_healthmod_dmgmult_box:SetConVar("pac_sv_health_modifier_min_damagescaling")
-
-		local healthmod_extrabars_box = vgui.Create("DCheckBoxLabel", healthmod_list_list)
-			healthmod_extrabars_box:SetText("Allow extra healthbars")
-			healthmod_extrabars_box:SetSize(400,30)
-			healthmod_extrabars_box:SetConVar("pac_sv_health_modifier_extra_bars")
-			healthmod_extrabars_box:SetToolTip("What are those? It's like an armor layer that takes damage before it gets applied to the entity.")
-	end
 	return master_list
 end
 
@@ -1154,200 +980,45 @@ function pace.FillServerSettings(pnl)
 
 	local master_list = vgui.Create("DCategoryList", pnl)
 	master_list:Dock(FILL)
-	
-	--models/entity
-			--[[
-				pac_allow_blood_color
-				pac_allow_mdl
-				pac_allow_mdl_entity
-				pac_modifier_model
-				pac_modifier_size
-			]]
-	
-	local model_category = master_list:Add("Allowed Playermodel Mutations")
-	model_category.Header:SetSize(40,40)
-	model_category.Header:SetFont("DermaLarge")
-	local model_category_list = vgui.Create("DListLayout")
-	model_category_list:DockPadding(20,0,20,20)
-	model_category:SetContents(model_category_list)
 
-	local pac_allow_blood_color_box = vgui.Create("DCheckBoxLabel", master_list)
-		pac_allow_blood_color_box:SetText("Blood")
-		pac_allow_blood_color_box:SetSize(400,30)
-		pac_allow_blood_color_box:SetConVar("pac_allow_blood_color")
-		model_category_list:Add(pac_allow_blood_color_box)
-	local pac_allow_mdl_box = vgui.Create("DCheckBoxLabel", master_list)
-		pac_allow_mdl_box:SetText("MDL")
-		pac_allow_mdl_box:SetSize(400,30)
-		pac_allow_mdl_box:SetConVar("pac_allow_mdl")
-		model_category_list:Add(pac_allow_mdl_box)
-	local pac_allow_mdl_entity_box = vgui.Create("DCheckBoxLabel", master_list)
-		pac_allow_mdl_entity_box:SetText("Entity MDL")
-		pac_allow_mdl_entity_box:SetSize(400,30)
-		pac_allow_mdl_entity_box:SetConVar("pac_allow_mdl_entity")
-		model_category_list:Add(pac_allow_mdl_entity_box)
-	local pac_modifier_model_box = vgui.Create("DCheckBoxLabel", master_list)
-		pac_modifier_model_box:SetText("Entity model")
-		pac_modifier_model_box:SetSize(400,30)
-		pac_modifier_model_box:SetConVar("pac_modifier_model")
-		model_category_list:Add(pac_modifier_model_box)
-	local pac_modifier_size_box = vgui.Create("DCheckBoxLabel", master_list)
-		pac_modifier_size_box:SetText("Entity size")
-		pac_modifier_size_box:SetSize(400,30)
-		pac_modifier_size_box:SetConVar("pac_modifier_size")
-		model_category_list:Add(pac_modifier_size_box)
-	
-	--movement and mass
-		--[[
-			pac_free_movement
-		]]
-	
-	local movement_category = master_list:Add("Player Movement")
-	movement_category.Header:SetSize(40,40)
-	movement_category.Header:SetFont("DermaLarge")
-	local movement_category_list = vgui.Create("DListLayout")
-	movement_category_list:DockPadding(20,20,20,20)
-	movement_category:SetContents(movement_category_list)
+	--general server stuff
+	PopulateCategory("Allowed Playermodel Mutations", master_list, convar_params_modifiers)
 
+	--player movement stuff
+	local movement_category_list = PopulateCategory("Player Movement", master_list, convar_params_movement)
 	local pac_allow_movement_form = vgui.Create("DComboBox", movement_category_list)
-		pac_allow_movement_form:SetText("Allow PAC player movement")
-		--pac_allow_movement_form:SetSize(400,20)
-		pac_allow_movement_form:SetSortItems(false)
+	pac_allow_movement_form:SetText("Allow PAC player movement")
+	pac_allow_movement_form:SetSize(400, 30)
+	pac_allow_movement_form:SetSortItems(false)
 
-		pac_allow_movement_form:AddChoice("disabled")
-		pac_allow_movement_form:AddChoice("disabled if noclip not allowed")
-		pac_allow_movement_form:AddChoice("enabled")
+	pac_allow_movement_form:AddChoice("disabled")
+	pac_allow_movement_form:AddChoice("disabled if noclip not allowed")
+	pac_allow_movement_form:AddChoice("enabled")
 
-		pac_allow_movement_form.OnSelect = function(_, _, value)
-			if value == "disabled" then
-				net.Start("pac_send_sv_cvar")
-				net.WriteString("pac_free_movement")
-				net.WriteString("0")
-				net.SendToServer()
-				--pac_allow_movement_form.form = generic_form("PAC player movement is disabled.")
-			elseif value == "disabled if noclip not allowed" then
-				net.Start("pac_send_sv_cvar")
-				net.WriteString("pac_free_movement")
-				net.WriteString("-1")
-				net.SendToServer()
-				--pac_allow_movement_form.form = generic_form("PAC player movement is disabled if noclip is not allowed.")
-			elseif value == "enabled" then
-				net.Start("pac_send_sv_cvar")
-				net.WriteString("pac_free_movement")
-				net.WriteString("1")
-				net.SendToServer()
-				--pac_allow_movement_form.form = generic_form("PAC player movement is enabled.")
-			end
+	pac_allow_movement_form.OnSelect = function(_, _, value)
+		if value == "disabled" then
+			net.Start("pac_send_sv_cvar")
+			net.WriteString("pac_free_movement")
+			net.WriteString("0")
+			net.SendToServer()
+			--pac_allow_movement_form.form = generic_form("PAC player movement is disabled.")
+		elseif value == "disabled if noclip not allowed" then
+			net.Start("pac_send_sv_cvar")
+			net.WriteString("pac_free_movement")
+			net.WriteString("-1")
+			net.SendToServer()
+			--pac_allow_movement_form.form = generic_form("PAC player movement is disabled if noclip is not allowed.")
+		elseif value == "enabled" then
+			net.Start("pac_send_sv_cvar")
+			net.WriteString("pac_free_movement")
+			net.WriteString("1")
+			net.SendToServer()
+			--pac_allow_movement_form.form = generic_form("PAC player movement is enabled.")
 		end
-		
-		--mode:ChooseOption(mode_str)
-		
-	local pac_player_movement_allow_mass_box = vgui.Create("DCheckBoxLabel", movement_category_list)
-		pac_player_movement_allow_mass_box:SetText("Allow Modify Mass")
-		pac_player_movement_allow_mass_box:SetSize(400,30)
-		movement_category_list:Add(pac_player_movement_allow_mass_box)
-		pac_player_movement_allow_mass_box:SetConVar("pac_player_movement_allow_mass")
+	end
 
-	local playermovement_min_mass_numbox = vgui.Create("DNumSlider", movement_category_list)
-		playermovement_min_mass_numbox:SetText("Mimnimum mass players can set for themselves")
-		playermovement_min_mass_numbox:SetValue(GetConVar("pac_player_movement_min_mass"):GetFloat())
-		playermovement_min_mass_numbox:SetMin(0.01) playermovement_min_mass_numbox:SetDecimals(0) playermovement_min_mass_numbox:SetMax(1000000)
-		playermovement_min_mass_numbox:SetSize(400,30)
-		movement_category_list:Add(playermovement_min_mass_numbox)
-		playermovement_min_mass_numbox:SetConVar("pac_player_movement_min_mass")
-		
-
-	local playermovement_max_mass_numbox = vgui.Create("DNumSlider", movement_category_list)
-		playermovement_max_mass_numbox:SetText("Maximum mass players can set for themselves")
-		playermovement_max_mass_numbox:SetValue(GetConVar("pac_player_movement_max_mass"):GetFloat())
-		playermovement_max_mass_numbox:SetMin(0.01) playermovement_max_mass_numbox:SetDecimals(0) playermovement_max_mass_numbox:SetMax(1000000)
-		playermovement_max_mass_numbox:SetSize(400,30)
-		movement_category_list:Add(playermovement_max_mass_numbox)
-		playermovement_max_mass_numbox:SetConVar("pac_player_movement_max_mass")
-		
-
-	local pac_player_movement_allow_mass_dmgscaling_box = vgui.Create("DCheckBoxLabel", movement_category_list)
-		pac_player_movement_allow_mass_dmgscaling_box:SetText("Allow damage scaling of physics damage based on player's mass")
-		pac_player_movement_allow_mass_dmgscaling_box:SetSize(400,30)
-		movement_category_list:Add(pac_player_movement_allow_mass_dmgscaling_box)
-		pac_player_movement_allow_mass_dmgscaling_box:SetConVar("pac_player_movement_physics_damage_scaling")
-		movement_category_list:Add(pac_player_movement_allow_mass_dmgscaling_box)
-
-		
-	--wear limits and bans
-		--[[
-			pac_sv_draw_distance
-			pac_sv_hide_outfit_on_death WORKSHOP DEPRECATED
-			pac_submit_limit
-			pac_submit_spam
-			pac_ban
-			pac_unban
-		]]
-	
-	local wear_list = master_list:Add("Server wearing/drawing")
-	wear_list.Header:SetSize(40,40)
-	wear_list.Header:SetFont("DermaLarge")
-	local draw_distance_list = vgui.Create("DListLayout")
-	draw_distance_list:DockPadding(20,0,20,20)
-	wear_list:SetContents(draw_distance_list)
-
-	local draw_dist_numbox = vgui.Create("DNumSlider", draw_distance_list)
-		draw_dist_numbox:SetText("Server draw distance")
-		draw_dist_numbox:SetValue(GetConVar("pac_sv_draw_distance"):GetInt())
-		draw_dist_numbox:SetMin(0) draw_dist_numbox:SetDecimals(0) draw_dist_numbox:SetMax(50000)
-		draw_dist_numbox:SetSize(400,30)
-		draw_dist_numbox:SetConVar("pac_sv_draw_distance")
-
-	local pac_submit_limit_numbox = vgui.Create("DNumSlider", draw_distance_list)
-		pac_submit_limit_numbox:SetText("pac_submit limit")
-		pac_submit_limit_numbox:SetValue(GetConVar("pac_submit_limit"):GetInt())
-		pac_submit_limit_numbox:SetMin(0) pac_submit_limit_numbox:SetDecimals(0) pac_submit_limit_numbox:SetMax(100)
-		pac_submit_limit_numbox:SetSize(400,30)
-		pac_submit_limit_numbox:SetConVar("pac_submit_limit")
-
-	local pac_submit_spam_box = vgui.Create("DCheckBoxLabel", draw_distance_list)
-		pac_submit_spam_box:SetText("prevent pac_submit spam")
-		pac_submit_spam_box:SetSize(400,30)
-		pac_submit_spam_box:SetConVar("pac_submit_spam")
-
-
-	
-	--misc
-		--[[
-			sv_pac_webcontent_allow_no_content_length
-			sv_pac_webcontent_limit
-			pac_to_contraption_allow
-			pac_max_contraption_entities
-			pac_restrictions
-		]]
-	local misc_list = master_list:Add("Misc")
-	misc_list.Header:SetSize(40,40)
-	misc_list.Header:SetFont("DermaLarge")
-	local misc_list_list = vgui.Create("DListLayout")
-	misc_list_list:DockPadding(20,0,20,20)
-	misc_list:SetContents(misc_list_list)
-	local webcontent_no_content_box = vgui.Create("DCheckBoxLabel", misc_list_list)
-		webcontent_no_content_box:SetText("allow downloads with no content length")
-		webcontent_no_content_box:SetSize(400,30)
-		webcontent_no_content_box:SetConVar("sv_pac_webcontent_allow_no_content_length")
-
-	local contraption_box = vgui.Create("DCheckBoxLabel", misc_list_list)
-		contraption_box:SetText("allow contraptions")
-		contraption_box:SetSize(400,30)
-		contraption_box:SetConVar("pac_to_contraption_allow")
-	
-	local contraption_entities_numbox = vgui.Create("DNumSlider", misc_list_list)
-		contraption_entities_numbox:SetText("PAC3 contraption entities limit")
-		contraption_entities_numbox:SetValue(GetConVar("pac_max_contraption_entities"):GetInt())
-		contraption_entities_numbox:SetMin(0) contraption_entities_numbox:SetDecimals(0) contraption_entities_numbox:SetMax(200)
-		contraption_entities_numbox:SetSize(400,30)
-		contraption_entities_numbox:SetConVar("pac_max_contraption_entities")
-
-	local cam_restrict_box = vgui.Create("DCheckBoxLabel", misc_list_list)
-		cam_restrict_box:SetText("restrict PAC editor camera movement")
-		cam_restrict_box:SetSize(400,30)
-		cam_restrict_box:SetConVar("pac_restrictions")
-	
+	PopulateCategory("Server wearing/drawing", master_list, convar_params_wearing_drawing)
+	PopulateCategory("Misc", master_list, convar_params_misc)
 
 	return master_list
 end
@@ -1366,6 +1037,7 @@ function pace.FillEditorSettings(pnl)
 	local partmenu_order_presets = vgui.Create("DComboBox",LeftPanel)
 	partmenu_order_presets:SetText("Select a part menu preset")
 	partmenu_order_presets:AddChoice("factory preset")
+	partmenu_order_presets:AddChoice("legacy")
 	partmenu_order_presets:AddChoice("expanded PAC4.5 preset")
 	partmenu_order_presets:AddChoice("bulk select poweruser")
 	partmenu_order_presets:AddChoice("user preset")
@@ -1379,7 +1051,7 @@ function pace.FillEditorSettings(pnl)
 	partmenu_apply_button:SetY(10)
 	partmenu_apply_button:SetWidth(65)
 	partmenu_apply_button:SetImage('icon16/accept.png')
-	
+
 	local partmenu_clearlist_button = vgui.Create("DButton", LeftPanel)
 	partmenu_clearlist_button:SetText("Clear")
 	partmenu_clearlist_button:SetX(285)
@@ -1393,7 +1065,7 @@ function pace.FillEditorSettings(pnl)
 	partmenu_savelist_button:SetY(10)
 	partmenu_savelist_button:SetWidth(70)
 	partmenu_savelist_button:SetImage('icon16/disk.png')
-	
+
 
 
 	local partmenu_choices = vgui.Create("DScrollPanel", LeftPanel)
@@ -1423,31 +1095,271 @@ function pace.FillEditorSettings(pnl)
 	partmenu_previews:SetWidth(200)
 
 
-	
+
 	local shortcutaction_choices = vgui.Create("DComboBox", LeftPanel)
 	shortcutaction_choices:SetText("Select a PAC action")
-	for _,name in ipairs(pace.PACActionShortcut_Dictionary) do
-		shortcutaction_choices:AddChoice(name)
+	shortcutaction_choices:SetSortItems(false)
+	pace.shortcutaction_choices = shortcutaction_choices
+	local function rebuild_shortcut_box()
+		local display, active_action = shortcutaction_choices:GetSelected()
+		local active_action_count = 0
+		if pace.PACActionShortcut[active_action] and (table.Count(pace.PACActionShortcut[active_action]) > 0) then
+			active_action_count = table.Count(pace.PACActionShortcut[active_action])
+		end
+		for i=#pace.PACActionShortcut_Dictionary,1,-1 do
+			shortcutaction_choices:RemoveChoice(i)
+		end
+		for _,name in ipairs(pace.PACActionShortcut_Dictionary) do
+			local display_name = name
+			local binds_str = ""
+			if pace.PACActionShortcut[name] and (table.Count(pace.PACActionShortcut[name]) > 0) then
+				display_name = "[" .. table.Count(pace.PACActionShortcut[name]) .. "]  " .. name
+			end
+			shortcutaction_choices:AddChoice(display_name, name)
+		end
+		if active_action then
+			if active_action_count > 0 then
+				timer.Simple(0, function() shortcutaction_choices:SetText("[" .. active_action_count .. "]  " .. active_action) end)
+			end
+		end
 	end
+
+	local shortcut_dumps = {}
+	local shortcut_dumps_rawstring = ""
+	local function refresh_shortcut_dumps()
+		shortcut_dumps = {}
+		shortcut_dumps_rawstring = ""
+		for _,name in ipairs(pace.PACActionShortcut_Dictionary) do
+			local already_included_basename = false
+			if pace.PACActionShortcut[name] then
+				local binds_str = ""
+				for i=1,10,1 do
+					if pace.PACActionShortcut[name][i] then
+						if not already_included_basename then
+							shortcut_dumps_rawstring = shortcut_dumps_rawstring .. "\n" .. name .. " : "
+							already_included_basename = true
+						end
+						local raw_combo = {}
+						local combo_string = "["..i.."] = "
+						for j=1,10,1 do
+							if not pace.PACActionShortcut[name][i][j] then continue end
+							combo_string = combo_string .. pace.PACActionShortcut[name][i][j] .. " + "
+							table.insert(raw_combo, pace.PACActionShortcut[name][i][j])
+						end
+						if not table.IsEmpty(raw_combo) then
+							shortcut_dumps_rawstring = shortcut_dumps_rawstring ..
+								" {" .. table.concat(raw_combo, "+") .. "},"
+							end
+						if combo_string ~= "" then
+							combo_string = string.TrimRight(combo_string, " + ")
+							binds_str = binds_str .. "\n" .. combo_string
+						end
+					end
+				end
+				shortcut_dumps[name] = string.Trim(binds_str,"\n")
+			end
+			shortcut_dumps_rawstring = string.Trim(shortcut_dumps_rawstring,"\n")
+		end
+		
+		local name, value = shortcutaction_choices:GetSelected()
+		shortcutaction_choices:SetTooltip(shortcut_dumps[value])
+		rebuild_shortcut_box()
+	end
+	
+	local function get_common_keybind_groupings(filter)
+		if filter then
+			if table.IsEmpty(filter) then return get_common_keybind_groupings() end
+		end
+
+		local ctrl = {}
+		local shift = {}
+		local alt = {}
+		local ctrl_shift = {}
+		local ctrl_alt = {}
+		local shift_alt = {}
+		local singles = {}
+		local pass_filter = {}
+
+		for action,tbl in pairs(pace.PACActionShortcut) do
+			for i=1,10,1 do
+				if pace.PACActionShortcut[action][i] then
+
+					local raw_combo = {}
+					local contains_ctrl = false
+					local contains_shift = false
+					local contains_alt = false
+					local fail_filter = true
+					local filter_match_number = 0
+
+					for j=1,10,1 do
+						key = pace.PACActionShortcut[action][i][j]
+						if not key then continue end
+						table.insert(raw_combo, pace.PACActionShortcut[action][i][j])
+						if filter then
+							for _,k in ipairs(filter) do
+								if input.GetKeyCode(key) == k or key == k then
+									filter_match_number = filter_match_number + 1
+								end
+							end
+						else
+							if input.GetKeyCode(key) == KEY_LCONTROL or input.GetKeyCode(key) == KEY_RCONTROL then
+								contains_ctrl = true
+							elseif input.GetKeyCode(key) == KEY_LSHIFT or input.GetKeyCode(key) == KEY_RSHIFT then
+								contains_shift = true
+							elseif input.GetKeyCode(key) == KEY_LALT or input.GetKeyCode(key) == KEY_RALT then
+								contains_alt = true
+							end
+						end
+					end
+
+					if filter then
+						if filter_match_number == #filter then
+							table.insert(pass_filter, {raw_combo, action})
+						end
+					end
+
+					if not table.IsEmpty(raw_combo) then
+						if contains_ctrl then
+							table.insert(ctrl, {raw_combo, action})
+							if contains_shift then
+								table.insert(shift, {raw_combo, action})
+								table.insert(ctrl_shift, {raw_combo, action})
+								if contains_alt then
+									table.insert(shift_alt, {raw_combo, action})
+								end
+							end
+							if contains_alt then
+								table.insert(alt, {raw_combo, action})
+								table.insert(ctrl_alt, {raw_combo, action})
+							end
+						elseif contains_shift then
+							table.insert(shift, {raw_combo, action})
+							if contains_alt then
+								table.insert(alt, {raw_combo, action})
+								table.insert(shift_alt, {raw_combo, action})
+							end
+						elseif contains_alt then
+							table.insert(alt, {raw_combo, action})
+						else
+							table.insert(singles, {raw_combo, action})
+						end
+					end
+				end
+			end
+		end
+
+		return {
+			ctrl = ctrl,
+			shift = shift,
+			alt = alt,
+			ctrl_shift = ctrl_shift,
+			ctrl_alt = ctrl_alt,
+			shift_alt = shift_alt,
+			singles = singles,
+			pass_filter = pass_filter
+		}
+	end
+
+	local output_panel_scroll = vgui.Create("DScrollPanel", LeftPanel)
+	output_panel_scroll:SetPos(430, 10) output_panel_scroll:SetSize(500, 500)
+	local output_panel
+	local function create_richtext()
+		if IsValid(output_panel) then output_panel:Remove() end
+		output_panel = vgui.Create("RichText", output_panel_scroll)
+		output_panel_scroll:AddItem(output_panel)
+		output_panel_scroll:SetVerticalScrollbarEnabled(true)
+		output_panel:SetSize(900 - 430 - 200,500)
+		output_panel:InsertColorChange(0,0,0, 255)
+	end
+	create_richtext()
+	output_panel:AppendText("keybind viewer\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n<- Use this dropdown to filter")
+
+	local test_cbox = vgui.Create("DComboBox", LeftPanel)
+	test_cbox:SetPos(300, 440) test_cbox:SetSize(120, 20)
+	test_cbox:SetSortItems(false)
+	test_cbox:SetText("filter keybinds")
+	local binder1_value
+	local binder2_value
+	local binder3_value
+	function test_cbox:OnSelect(i,val,data)
+		create_richtext()
+		local keybind_groupings = get_common_keybind_groupings()
+		
+		if keybind_groupings then
+			local str = ""
+			if val == "all actions" then
+				refresh_shortcut_dumps()
+				str = shortcut_dumps_rawstring
+			elseif val == "keybind categories" then
+				for groupname,group in pairs(keybind_groupings) do
+					str = str .. "Category: " .. groupname .. "\n"
+					for j,v in ipairs(group) do
+						str = str .. table.concat(v[1], "+") .. " : " .. v[2] .. "\n"
+					end
+					str = str .. "\n\n"
+				end
+			elseif val == "<<< filter" then
+				if not binder1_value then
+					output_panel:InsertColorChange(255,0,0, 255)
+					output_panel:AppendText("No binds to search! Use the three binder buttons\n")
+					output_panel:InsertColorChange(0,0,0, 255)
+				end
+				keybind_groupings = get_common_keybind_groupings({binder1_value, binder2_value, binder3_value})
+				if table.IsEmpty(keybind_groupings["pass_filter"]) then
+					output_panel:InsertColorChange(100,100,100, 255)
+					output_panel:AppendText("<No matching results>\n")
+					output_panel:InsertColorChange(0,0,0, 255)
+				end
+				for i,v in ipairs(keybind_groupings["pass_filter"]) do
+					str = str .. table.concat(v[1], "+") .. " : " .. v[2]
+					str = str .. "\n"
+				end
+			else
+				for i,v in ipairs(keybind_groupings[val]) do
+					str = str .. table.concat(v[1], "+") .. " : " .. v[2]
+					str = str .. "\n"
+				end
+			end
+			output_panel:AppendText(str)
+		end
+		
+	end
+	test_cbox:AddChoice("<<< filter") test_cbox:AddChoice("all actions") test_cbox:AddChoice("keybind categories") test_cbox:AddChoice("singles")
+	test_cbox:AddChoice("ctrl") test_cbox:AddChoice("shift") test_cbox:AddChoice("alt")
+	test_cbox:AddChoice("ctrl_alt") test_cbox:AddChoice("ctrl_shift") test_cbox:AddChoice("shift_alt")
+
+	rebuild_shortcut_box()
 	shortcutaction_choices:SetX(10) shortcutaction_choices:SetY(400)
 	shortcutaction_choices:SetWidth(170)
 	shortcutaction_choices:SetHeight(20)
 	shortcutaction_choices:ChooseOptionID(1)
-	
+	refresh_shortcut_dumps()
+	shortcutaction_choices:SetTooltip(shortcut_dumps_rawstring)
+	function shortcutaction_choices:OnMenuOpened(menu)
+		refresh_shortcut_dumps()
+		self:SetTooltip()
+	end
 	function shortcutaction_choices:Think()
 		self.next = self.next or 0
 		self.found = self.found or false
 		if self.next < RealTime() then self.found = false end
-		if self:IsHovered() then 
+		if self:IsHovered() then
+			if self:IsMenuOpen() then
+				self:SetTooltip()
+			end
+
 			if input.IsKeyDown(KEY_UP) then
+				refresh_shortcut_dumps()
 				if not self.found then self:ChooseOptionID(math.Clamp(self:GetSelectedID() + 1,1,table.Count(pace.PACActionShortcut_Dictionary))) self.found = true self.next = RealTime() + 0.3 end
 			elseif input.IsKeyDown(KEY_DOWN) then
+				refresh_shortcut_dumps()
 				if not self.found then self:ChooseOptionID(math.Clamp(self:GetSelectedID() - 1,1,table.Count(pace.PACActionShortcut_Dictionary))) self.found = true self.next = RealTime() + 0.3 end
 			else self.found = false end
-		else self.found = false
+		else
+			self.found = false
 		end
 	end
-	
+
 	local shortcuts_description_text = vgui.Create("DLabel", LeftPanel)
 	shortcuts_description_text:SetFont("DermaDefaultBold")
 	shortcuts_description_text:SetText("Edit keyboard shortcuts")
@@ -1460,7 +1372,7 @@ function pace.FillEditorSettings(pnl)
 	shortcutaction_presets:SetText("Select a shortcut preset")
 	shortcutaction_presets:AddChoice("factory preset", pace.PACActionShortcut_Default)
 	shortcutaction_presets:AddChoice("no CTRL preset", pace.PACActionShortcut_NoCTRL)
-	shortcutaction_presets:AddChoice("Cedric's preset", pace.PACActionShortcut_Cedric)
+	shortcutaction_presets:AddChoice("experimental preset", pace.PACActionShortcut_Experimental)
 
 	for i,filename in ipairs(file.Find("pac3_config/pac_editor_shortcuts*.txt","DATA")) do
 		local data = file.Read("pac3_config/" .. filename, "DATA")
@@ -1481,7 +1393,7 @@ function pace.FillEditorSettings(pnl)
 			end
 		end
 	end
-	
+
 
 	local shortcutaction_choices_textCurrentShortcut = vgui.Create("DLabel", LeftPanel)
 	shortcutaction_choices_textCurrentShortcut:SetText("Shortcut to edit:")
@@ -1489,8 +1401,8 @@ function pace.FillEditorSettings(pnl)
 	shortcutaction_choices_textCurrentShortcut:SetWidth(200)
 	shortcutaction_choices_textCurrentShortcut:SetX(200)
 	shortcutaction_choices_textCurrentShortcut:SetY(420)
-	
-	
+
+
 	local shortcutaction_index = vgui.Create("DNumberWang", LeftPanel)
 	shortcutaction_index:SetToolTip("index")
 	shortcutaction_index:SetValue(1)
@@ -1504,9 +1416,9 @@ function pace.FillEditorSettings(pnl)
 	local function update_shortcutaction_choices_textCurrentShortcut(num)
 		shortcutaction_choices_textCurrentShortcut:SetText("<No shortcut at index "..num..">")
 		num = tonumber(num)
-		local action, val = shortcutaction_choices:GetSelected()
+		local diplayname, action = shortcutaction_choices:GetSelected()
 		local strs = {}
-		
+
 		if action and action ~= "" then
 			if pace.PACActionShortcut[action] and pace.PACActionShortcut[action][num] then
 				for i,v in ipairs(pace.PACActionShortcut[action][num]) do
@@ -1524,8 +1436,12 @@ function pace.FillEditorSettings(pnl)
 		update_shortcutaction_choices_textCurrentShortcut(num)
 	end
 
-	function shortcutaction_choices:OnSelect(i, action)
+	function shortcutaction_choices:OnSelect(i, displayname, action)
 		shortcutaction_index:OnValueChanged(shortcutaction_index:GetValue())
+		refresh_shortcut_dumps()
+		create_richtext()
+		output_panel:AppendText(action .. "\n")
+		output_panel:AppendText(shortcut_dumps[action] or "<no keybinds>")
 	end
 
 	local binder1 = vgui.Create("DBinder", LeftPanel)
@@ -1534,8 +1450,9 @@ function pace.FillEditorSettings(pnl)
 	binder1:SetHeight(30)
 	binder1:SetWidth(90)
 	function binder1:OnChange( num )
-		if not num or num == 0 then return end
+		if not num or num == 0 then binder1_value = nil return end
 		if not input.GetKeyName( num ) then return end
+		binder1_value = num
 		LocalPlayer():ChatPrint("New bound key 1: "..input.GetKeyName( num ))
 		pace.FlashNotification("New bound key 1: "..input.GetKeyName( num ))
 	end
@@ -1546,8 +1463,9 @@ function pace.FillEditorSettings(pnl)
 	binder2:SetHeight(30)
 	binder2:SetWidth(90)
 	function binder2:OnChange( num )
-		if not num or num == 0 then return end
+		if not num or num == 0 then binder2_value = nil  return end
 		if not input.GetKeyName( num ) then return end
+		binder2_value = num
 		LocalPlayer():ChatPrint("New bound key 2: "..input.GetKeyName( num ))
 		pace.FlashNotification("New bound key 2: "..input.GetKeyName( num ))
 	end
@@ -1558,16 +1476,16 @@ function pace.FillEditorSettings(pnl)
 	binder3:SetHeight(30)
 	binder3:SetWidth(90)
 	function binder3:OnChange( num )
-		if not num or num == 0 then return end
+		if not num or num == 0 then binder3_value = nil return end
 		if not input.GetKeyName( num ) then return end
+		binder2_value = num
 		LocalPlayer():ChatPrint("New bound key 3: "..input.GetKeyName( num ))
 		pace.FlashNotification("New bound key 3: "..input.GetKeyName( num ))
 	end
 
 	local function send_active_shortcut_to_assign(tbl)
-		local action = shortcutaction_choices:GetValue()
+		local display, action = shortcutaction_choices:GetSelected()
 		local index = shortcutaction_index:GetValue()
-		
 		if not tbl then
 			pace.PACActionShortcut[action] = pace.PACActionShortcut[action] or {}
 			pace.PACActionShortcut[action][index] = pace.PACActionShortcut[action][index] or {}
@@ -1581,7 +1499,7 @@ function pace.FillEditorSettings(pnl)
 				pace.PACActionShortcut[action][index] = nil
 			end
 		elseif not table.IsEmpty(tbl) then
-			pace.AssignEditorShortcut(shortcutaction_choices:GetValue(), tbl, shortcutaction_index:GetValue())
+			pace.AssignEditorShortcut(action, tbl, shortcutaction_index:GetValue())
 		end
 		encode_table_to_file("pac_editor_shortcuts")
 	end
@@ -1601,6 +1519,7 @@ function pace.FillEditorSettings(pnl)
 		binder3:SetSelectedNumber(0)
 		send_active_shortcut_to_assign()
 		update_shortcutaction_choices_textCurrentShortcut(shortcutaction_index:GetValue())
+		refresh_shortcut_dumps()
 	end
 
 	local bindoverwrite = vgui.Create("DButton", LeftPanel)
@@ -1613,6 +1532,7 @@ function pace.FillEditorSettings(pnl)
 	bindoverwrite:SetColor(Color(0,200,0))
 	bindoverwrite:SetIcon("icon16/disk.png")
 	function bindoverwrite:DoClick()
+		local _, action = shortcutaction_choices:GetSelected()
 		local tbl = {}
 		local i = 1
 		--print(binder1:GetValue(), binder2:GetValue(), binder3:GetValue())
@@ -1620,9 +1540,9 @@ function pace.FillEditorSettings(pnl)
 		if binder2:GetValue() ~= 0 then tbl[i] = input.GetKeyName(binder2:GetValue()) i = i + 1 end
 		if binder3:GetValue() ~= 0 then tbl[i] = input.GetKeyName(binder3:GetValue()) end
 		if not table.IsEmpty(tbl) then
-			pace.FlashNotification("Combo " .. shortcutaction_index:GetValue() .. " committed: " .. table.concat(tbl," "))
-			if not pace.PACActionShortcut[shortcutaction_choices:GetValue()] then
-				pace.PACActionShortcut[shortcutaction_choices:GetValue()] = {}
+			pace.FlashNotification(action .. " " .. "Combo " .. shortcutaction_index:GetValue() .. " committed: " .. table.concat(tbl," "))
+			if not pace.PACActionShortcut[action] then
+				pace.PACActionShortcut[action] = {}
 			end
 			send_active_shortcut_to_assign(tbl)
 			update_shortcutaction_choices_textCurrentShortcut(shortcutaction_index:GetValue())
@@ -1645,7 +1565,7 @@ function pace.FillEditorSettings(pnl)
 	bindcapture_text:SetX(300)
 	bindcapture_text:SetY(480)
 	bindcapture_text:SetSize(300, 30)
-	
+
 	function bindcapture_text:Think()
 		self:SetText(pace.bindcapturelabel_text)
 	end
@@ -1657,6 +1577,7 @@ function pace.FillEditorSettings(pnl)
 	bindcapture:SetWidth(90)
 	pace.bindcapturelabel_text = ""
 	function bindcapture:DoClick()
+		local previous_inputs_tbl = {}
 		pace.delayshortcuts = RealTime() + 5
 		local input_active = {}
 		local no_input = true
@@ -1664,11 +1585,12 @@ function pace.FillEditorSettings(pnl)
 		local previous_inputs_str = ""
 		pace.FlashNotification("Recording input... Release one key when you're done")
 
-		hook.Add("Tick", "pace_buttoncapture_countdown", function()
+		pac.AddHook("Tick", "pace_buttoncapture_countdown", function()
 			pace.delayshortcuts = RealTime() + 5
 			local inputs_tbl = {}
 			inputs_str = ""
 			for i=1,172,1 do --build bool list of all current keys
+				if pace.shortcuts_ignored_keys[i] then continue end
 				if input.IsKeyDown(i) then
 					input_active[i] = true
 					inputs_tbl[i] = true
@@ -1679,11 +1601,10 @@ function pace.FillEditorSettings(pnl)
 				end
 			end
 			pace.bindcapturelabel_text = "Recording input:\n" .. inputs_str
-			
+
 			if previous_inputs_tbl and table.Count(previous_inputs_tbl) > 0 then
 				if table.Count(inputs_tbl) < table.Count(previous_inputs_tbl) then
 					pace.FlashNotification("ending input!" .. previous_inputs_str)
-
 					local tbl = {}
 					local i = 1
 					for key,bool in pairs(previous_inputs_tbl) do
@@ -1691,21 +1612,36 @@ function pace.FillEditorSettings(pnl)
 						i = i + 1
 					end
 					--print(shortcutaction_choices:GetValue(), shortcutaction_index:GetValue())
-					pace.AssignEditorShortcut(shortcutaction_choices:GetValue(), tbl, shortcutaction_index:GetValue())
+					local _, action = shortcutaction_choices:GetSelected()
+					pace.AssignEditorShortcut(action, tbl, shortcutaction_index:GetValue())
 					--pace.PACActionShortcut[shortcutaction_choices:GetValue()][shortcutaction_index:GetValue()] = tbl
 					pace.delayshortcuts = RealTime() + 5
 					pace.bindcapturelabel_text = "Recorded input:\n" .. previous_inputs_str
-					hook.Remove("Tick", "pace_buttoncapture_countdown")
+					previous_inputs_tbl = {}
+					inputs_tbl = {}
+					pac.RemoveHook("Tick", "pace_buttoncapture_countdown")
+					if #tbl < 4 then
+						if tbl[1] then
+							binder1:SetValue(input.GetKeyCode(tbl[1]))
+						end
+						if tbl[2] then
+							binder2:SetValue(input.GetKeyCode(tbl[2]))
+						end
+						if tbl[3] then
+							binder3:SetValue(input.GetKeyCode(tbl[3]))
+						end
+					end
 				end
 			end
 			previous_inputs_str = inputs_str
 			previous_inputs_tbl = inputs_tbl
 		end)
-		
+
 	end
 
 	local bulkbinder = vgui.Create("DBinder", LeftPanel)
 	function bulkbinder:OnChange( num )
+		if num == 0 then GetConVar("pac_bulk_select_key"):SetString("") return end
 		GetConVar("pac_bulk_select_key"):SetString(input.GetKeyName( num ))
 	end
 	bulkbinder:SetX(210)
@@ -1724,74 +1660,44 @@ function pace.FillEditorSettings(pnl)
 		end
 	end
 
-	local function FindImage(option_name) 
-		if option_name == "save" then
-			return pace.MiscIcons.save
-		elseif option_name == "load" then
-			return pace.MiscIcons.load
-		elseif option_name == "wear" then
-			return pace.MiscIcons.wear
-		elseif option_name == "remove" then
-			return pace.MiscIcons.clear
-		elseif option_name == "copy" then
-			return pace.MiscIcons.copy
-		elseif option_name == "paste" then
-			return pace.MiscIcons.paste
-		elseif option_name == "cut" then
-			return 'icon16/cut.png'
-		elseif option_name == "paste_properties" then
-			return pace.MiscIcons.replace
-		elseif option_name == "clone" then
-			return pace.MiscIcons.clone
-		elseif option_name == "partsize_info" then
-			return'icon16/drive.png'
-		elseif option_name == "bulk_apply_properties" then
-			return 'icon16/application_form.png'
-		elseif option_name == "bulk_select" then
-			return 'icon16/table_multiple.png'
-		elseif option_name == "spacer" then
-			return 'icon16/application_split.png'
-		elseif option_name == "hide_editor" then
-			return 'icon16/application_delete.png'
-		elseif option_name == "expand_all" then
-			return 'icon16/arrow_down.png'
-		elseif option_name == "collapse_all" then
-			return 'icon16/arrow_in.png'
-		elseif option_name == "copy_uid" then
-			return pace.MiscIcons.uniqueid
-		elseif option_name == "help_part_info" then
-			return 'icon16/information.png'
-		elseif option_name == "reorder_movables" then 
-			return 'icon16/application_double.png'
-		end
-		return 'icon16/world.png'
-	end
-
 	partmenu_choices:SetY(50)
 	partmenu_choices:SetX(10)
 	for i,v in pairs(pace.operations_all_operations) do
 		local pnl = vgui.Create("DButton", f)
 		pnl:SetText(string.Replace(string.upper(v),"_"," "))
-		pnl:SetImage(FindImage(v))
+		pnl:SetImage(pace.GetPartMenuOptionImage(v))
+		pnl:SetTooltip("Left click to add at the end\nRight click to insert at the beginning")
 
 		function pnl:DoClick()
 			table.insert(buildlist_partmenu,v)
 			partmenu_previews:AddLine(#buildlist_partmenu,v)
+		end
+		function pnl:DoRightClick()
+			table.insert(buildlist_partmenu,1,v)
+			local previous_list = {}
+			for i,v in ipairs(partmenu_previews:GetLines()) do
+				table.insert(previous_list,v:GetValue(2))
+			end
+			ClearPartMenuPreviewList()
+			partmenu_previews:AddLine(1,v)
+			for i,v in ipairs(previous_list) do
+				partmenu_previews:AddLine(i+1,v)
+			end
 		end
 		partmenu_choices:AddItem(pnl)
 		pnl:SetHeight(18)
 		pnl:SetWidth(200)
 		pnl:SetY(20*(i-1))
 	end
-	
+
 	partmenu_choices:SetWidth(200)
 	partmenu_choices:SetHeight(320)
 	partmenu_choices:SetVerticalScrollbarEnabled(true)
-	
+
 
 	local RightPanel = vgui.Create( "DTree", f )
-	Test_Node = RightPanel:AddNode( "Test", "icon16/world.png" )
-	test_part = pac.CreatePart("base") //the menu needs a part to get its full version in preview
+	local Test_Node = RightPanel:AddNode( "Test", "icon16/world.png" )
+	local test_part = pac.CreatePart("base") //the menu needs a part to get its full version in preview
 	function RightPanel:DoRightClick()
 		temp_list = pace.operations_order
 		pace.operations_order = buildlist_partmenu
@@ -1805,7 +1711,7 @@ function pace.FillEditorSettings(pnl)
 		pace.OnPartMenu(test_part)
 		temp_list = pace.operations_order
 		pace.operations_order = temp_list
-	end 
+	end
 	test_part:Remove() //dumb workaround but it works
 
 
@@ -1813,15 +1719,17 @@ function pace.FillEditorSettings(pnl)
 	div:Dock( FILL )
 	div:SetLeft( LeftPanel )
 	div:SetRight( RightPanel )
-	
+
 	div:SetDividerWidth( 8 )
 	div:SetLeftMin( 50 )
 	div:SetRightMin( 50 )
-	div:SetLeftWidth( 450 )
+	div:SetLeftWidth( 700 )
 	partmenu_order_presets.OnSelect = function( self, index, value )
 		local temp_list = {"wear","save","load"}
 		if value == "factory preset" then
 			temp_list = table.Copy(pace.operations_default)
+		elseif value == "legacy" then
+			temp_list = table.Copy(pace.operations_legacy)
 		elseif value == "expanded PAC4.5 preset" then
 			temp_list = table.Copy(pace.operations_experimental)
 		elseif value == "bulk select poweruser" then
@@ -1836,11 +1744,11 @@ function pace.FillEditorSettings(pnl)
 		buildlist_partmenu = temp_list
 	end
 
-	function partmenu_apply_button:DoClick() 
+	function partmenu_apply_button:DoClick()
 		pace.operations_order = buildlist_partmenu
 	end
 
-	function partmenu_clearlist_button:DoClick() 
+	function partmenu_clearlist_button:DoClick()
 		ClearPartMenuPreviewList()
 		buildlist_partmenu = {}
 	end
@@ -1851,7 +1759,7 @@ function pace.FillEditorSettings(pnl)
 
 	function partmenu_previews:DoDoubleClick(id, line)
 		table.remove(buildlist_partmenu,id)
-		
+
 		ClearPartMenuPreviewList()
 		for i,v in ipairs(buildlist_partmenu) do
 			partmenu_previews:AddLine(i,v)
@@ -1860,7 +1768,7 @@ function pace.FillEditorSettings(pnl)
 		PrintTable(buildlist_partmenu)
 	end
 
-	
+
 	if pace.operations_order then
 		for i,v in pairs(pace.operations_order) do
 			table.insert(buildlist_partmenu,v)
@@ -1876,17 +1784,17 @@ function pace.FillEditorSettings2(pnl)
 	local panel = vgui.Create( "DPanel", pnl )
 	--[[ movement binds
 		CreateConVar("pac_editor_camera_forward_bind", "w")
-	
+
 		CreateConVar("pac_editor_camera_back_bind", "s")
-	
+
 		CreateConVar("pac_editor_camera_moveleft_bind", "a")
-	
+
 		CreateConVar("pac_editor_camera_moveright_bind", "d")
-	
+
 		CreateConVar("pac_editor_camera_up_bind", "space")
-	
+
 		CreateConVar("pac_editor_camera_down_bind", "")
-		
+
 		]]
 
 	--[[pace.camera_movement_binds = {
@@ -1897,7 +1805,8 @@ function pace.FillEditorSettings2(pnl)
 		["up"] = pace.camera_up_bind,
 		["down"] = pace.camera_down_bind,
 		["slow"] = pace.camera_slow_bind,
-		["speed"] = pace.camera_speed_bind
+		["speed"] = pace.camera_speed_bind,
+		["roll_drag"] = pace.camera_roll_drag_bind
 		}
 	]]
 
@@ -1925,97 +1834,93 @@ function pace.FillEditorSettings2(pnl)
 	local forward_binder = vgui.Create("DBinder", LeftPanel)
 		forward_binder:SetSize(40,40)
 		forward_binder:SetPos(100,40)
-		forward_binder:SetTooltip("move forward")
+		forward_binder:SetTooltip("move forward" .. "\nbound to " .. pace.camera_movement_binds["forward"]:GetString())
 		forward_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["forward"]:GetString()))
 		function forward_binder:OnChange(num)
 			pace.camera_movement_binds["forward"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("move forward" .. "\nbound to " .. input.GetKeyName( num ))
 		end
 
 	local back_binder = vgui.Create("DBinder", LeftPanel)
 		back_binder:SetSize(40,40)
 		back_binder:SetPos(100,80)
-		back_binder:SetTooltip("move back")
+		back_binder:SetTooltip("move back" .. "\nbound to " .. pace.camera_movement_binds["back"]:GetString())
 		back_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["back"]:GetString()))
 		function back_binder:OnChange(num)
 			pace.camera_movement_binds["back"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("move back" .. "\nbound to " .. input.GetKeyName( num ))
 		end
 
 	local moveleft_binder = vgui.Create("DBinder", LeftPanel)
 		moveleft_binder:SetSize(40,40)
 		moveleft_binder:SetPos(60,80)
-		moveleft_binder:SetTooltip("move left")
+		moveleft_binder:SetTooltip("move left" .. "\nbound to " .. pace.camera_movement_binds["moveleft"]:GetString())
 		moveleft_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["moveleft"]:GetString()))
 		function moveleft_binder:OnChange(num)
 			pace.camera_movement_binds["moveleft"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("move left" .. "\nbound to " .. input.GetKeyName( num ))
 		end
 
 	local moveright_binder = vgui.Create("DBinder", LeftPanel)
 		moveright_binder:SetSize(40,40)
 		moveright_binder:SetPos(140,80)
-		moveright_binder:SetTooltip("move right")
+		moveright_binder:SetTooltip("move right" .. "\nbound to " .. pace.camera_movement_binds["moveright"]:GetString())
 		moveright_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["moveright"]:GetString()))
 		function moveright_binder:OnChange(num)
 			pace.camera_movement_binds["moveright"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("move right" .. "\nbound to " .. input.GetKeyName( num ))
 		end
 
 	local up_binder = vgui.Create("DBinder", LeftPanel)
 		up_binder:SetSize(40,40)
 		up_binder:SetPos(180,40)
-		up_binder:SetTooltip("move up")
+		up_binder:SetTooltip("move up" .. "\nbound to " .. pace.camera_movement_binds["up"]:GetString())
 		up_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["up"]:GetString()))
 		function up_binder:OnChange(num)
 			pace.camera_movement_binds["up"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("move up" .. "\nbound to " .. input.GetKeyName( num ))
 		end
 
 	local down_binder = vgui.Create("DBinder", LeftPanel)
 		down_binder:SetSize(40,40)
 		down_binder:SetPos(180,80)
-		down_binder:SetTooltip("move down")
+		down_binder:SetTooltip("move down" .. "\nbound to " .. pace.camera_movement_binds["down"]:GetString())
 		down_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["down"]:GetString()))
 		function down_binder:OnChange(num)
-			print(num, input.GetKeyName( num ))
 			pace.camera_movement_binds["down"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("move down" .. "\nbound to " .. input.GetKeyName( num ))
 		end
 
 	local slow_binder = vgui.Create("DBinder", LeftPanel)
 		slow_binder:SetSize(40,40)
 		slow_binder:SetPos(20,80)
-		slow_binder:SetTooltip("go slow")
+		slow_binder:SetTooltip("go slow" .. "\nbound to " .. pace.camera_movement_binds["slow"]:GetString())
 		slow_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["slow"]:GetString()))
 		function slow_binder:OnChange(num)
 			pace.camera_movement_binds["slow"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("go slow" .. "\nbound to " .. input.GetKeyName( num ))
 		end
 
 	local speed_binder = vgui.Create("DBinder", LeftPanel)
 		speed_binder:SetSize(40,40)
 		speed_binder:SetPos(20,40)
-		speed_binder:SetTooltip("go fast")
+		speed_binder:SetTooltip("go fast" .. "\nbound to " .. pace.camera_movement_binds["speed"]:GetString())
 		speed_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["speed"]:GetString()))
 		function speed_binder:OnChange(num)
 			pace.camera_movement_binds["speed"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("go fast" .. "\nbound to " .. input.GetKeyName( num ))
 		end
-	
-	--[[pace.partmenu_categories_cedrics = 
-		{
-			["new!"] =
-			{
-				["icon"]				=		"icon16/new.png",
-				["interpolated_multibone"]=	"interpolated_multibone",
-				["damage_zone"]			=	"damage_zone",
-				["hitscan"]				=	"hitscan",
-				["lock"]				=		"lock",
-				["force"]				=		"force",
-				["health_modifier"]		=		"health_modifier",
-			},
-			["logic"] =
-			{
-				["icon"]				=		"icon16/server_chart.png",
-				["proxy"]				=	"proxy",
-				["command"]				=	"command",
-				["event"]				=		"event",
-				["text"]				=		"text",
-				["link"]				=		"link",
-		},]]
+
+	local roll_binder = vgui.Create("DBinder", LeftPanel)
+		roll_binder:SetSize(40,40)
+		roll_binder:SetPos(60,40)
+		roll_binder:SetTooltip("roll drag (hold & drag to tilt, tap to reset)" .. "\nbound to " .. pace.camera_movement_binds["roll_drag"]:GetString())
+		roll_binder:SetValue(input.GetKeyCode(pace.camera_movement_binds["roll_drag"]:GetString()))
+		function roll_binder:OnChange(num)
+			pace.camera_movement_binds["roll_drag"]:SetString(input.GetKeyName( num ))
+			self:SetTooltip("roll drag (hold & drag to tilt, tap to reset)" .. "\nbound to " .. input.GetKeyName( num ))
+		end
+
 	local Parts = pac.GetRegisteredParts()
 	local function get_icon(str, fallback)
 		if str then
@@ -2032,9 +1937,9 @@ function pace.FillEditorSettings2(pnl)
 		else
 			return "icon16/page_white.png"
 		end
-		
+
 	end
-		
+
 	local categorytree = vgui.Create("DTree", RightPanel)
 		categorytree:SetY(30)
 		categorytree:SetSize(360,400)
@@ -2061,7 +1966,7 @@ function pace.FillEditorSettings2(pnl)
 		local base = vgui.Create("EditablePanel")
 		base:SetPos(input.GetCursorPos())
 		base:SetSize(200, 300)
-		
+
 		base:MakePopup()
 
 		function base:OnRemove()
@@ -2126,7 +2031,7 @@ function pace.FillEditorSettings2(pnl)
 
 			--base:SetHeight(20 * #result.found + edit:GetTall())
 			base:SetHeight(600 + edit:GetTall())
-			
+
 		end
 
 		edit:OnValueChange("")
@@ -2182,10 +2087,10 @@ function pace.FillEditorSettings2(pnl)
 			if input.IsMouseDown(MOUSE_LEFT) and not (self:IsHovered() or edit:IsHovered()) then self:Remove() end
 		end
 		frame:MakePopup()
-		
+
 		frame:SetSize(300,30)
 		frame:SetPos(input.GetCursorPos())
-		
+
 		edit:Dock(TOP)
 		edit:RequestFocus()
 		edit:SetUpdateOnType(true)
@@ -2202,20 +2107,20 @@ function pace.FillEditorSettings2(pnl)
 			if input.IsMouseDown(MOUSE_LEFT) and not (self:IsHovered() or edit:IsHovered()) then self:Remove() end
 		end
 		frame:MakePopup()
-		
+
 		frame:SetSize(300,30)
 		frame:SetPos(category_node.Label:LocalToScreen(category_node.Label:GetPos()))
-		
+
 		edit:Dock(TOP)
 		edit:RequestFocus()
 		edit:SetUpdateOnType(true)
 	end
-	
+
 	local function load_partgroup_template_into_tree(categorytree, tbl)
 		tbl = tbl or pace.partgroups or pace.partmenu_categories_default
 		categorytree:Clear()
 		for category,category_contents in pairs(tbl) do
-			
+
 			local category_node = categorytree:AddNode(category)
 			category_node:SetIcon(get_icon(category_contents.icon, category))
 
@@ -2264,10 +2169,10 @@ function pace.FillEditorSettings2(pnl)
 		part_categories_presets:SetText("Select a part category preset")
 		part_categories_presets:AddChoice("active preset")
 		part_categories_presets:AddChoice("factory preset")
-		part_categories_presets:AddChoice("Cedric's preset")
+		part_categories_presets:AddChoice("experimental preset")
 		local default_partgroup_presets = {
 			["pac_part_categories.txt"] = true,
-			["pac_part_categories_cedrics.txt"] = true,
+			["pac_part_categories_experimental.txt"] = true,
 			["pac_part_categories_default.txt"] = true
 		}
 		for i,filename in ipairs(file.Find("pac3_config/pac_part_categories*.txt","DATA")) do
@@ -2275,7 +2180,7 @@ function pace.FillEditorSettings2(pnl)
 				part_categories_presets:AddChoice(string.GetFileFromFilename(filename))
 			end
 		end
-		
+
 		part_categories_presets:SetX(10) part_categories_presets:SetY(10)
 		part_categories_presets:SetWidth(170)
 		part_categories_presets:SetHeight(20)
@@ -2283,8 +2188,8 @@ function pace.FillEditorSettings2(pnl)
 	part_categories_presets.OnSelect = function( self, index, value )
 		if value == "factory preset" then
 			pace.partgroups = pace.partmenu_categories_default
-		elseif value == "Cedric's preset" then
-			pace.partgroups = pace.partmenu_categories_cedrics
+		elseif value == "experimental preset" then
+			pace.partgroups = pace.partmenu_categories_experimental
 		elseif string.find(value, ".txt") then
 			pace.partgroups = util.KeyValuesToTable(file.Read("pac3_config/"..value))
 		elseif value == "active preset" then
@@ -2353,19 +2258,19 @@ function pace.ConfigureEventWheelMenu()
 	master_panel:Center()
 	local mid_panel = vgui.Create("DPanel", master_panel)
 	mid_panel:Dock(FILL)
-	
+
 	local scr_pnl = vgui.Create("DScrollPanel", mid_panel)
-	scr_pnl:SetSize(490,800)
+	scr_pnl:Dock(FILL)
 	scr_pnl:SetPos(0,45)
 	local list = vgui.Create("DListLayout", scr_pnl) list:Dock(FILL)
 
 	local first_panel = vgui.Create("DPanel", mid_panel)
 	first_panel:SetSize(500,40)
 	first_panel:Dock(TOP)
-	
+
 	local circle_style_listmenu = vgui.Create("DComboBox",first_panel)
 	circle_style_listmenu:SetText("Choose eventwheel style")
-	circle_style_listmenu:SetSize(200,20)
+	circle_style_listmenu:SetSize(150,20)
 	circle_style_listmenu:AddChoice("legacy")
 	circle_style_listmenu:AddChoice("concentric")
 	circle_style_listmenu:AddChoice("alternative")
@@ -2381,8 +2286,8 @@ function pace.ConfigureEventWheelMenu()
 
 	local circle_clickmode = vgui.Create("DComboBox",first_panel)
 	circle_clickmode:SetText("Choose eventwheel clickmode")
-	circle_clickmode:SetSize(200,20)
-	circle_clickmode:SetPos(200,0)
+	circle_clickmode:SetSize(160,20)
+	circle_clickmode:SetPos(150,0)
 	circle_clickmode:AddChoice("clickable and activates on close")
 	circle_clickmode:AddChoice("not clickable, but activate on close")
 	circle_clickmode:AddChoice("clickable, but do not activate on close")
@@ -2395,11 +2300,11 @@ function pace.ConfigureEventWheelMenu()
 			GetConVar("pac_eventwheel_clickmode"):SetString("1")
 		end
 	end
-	
+
 
 	local rectangle_style_listmenu = vgui.Create("DComboBox",first_panel)
 	rectangle_style_listmenu:SetText("Choose eventlist style")
-	rectangle_style_listmenu:SetSize(200,20)
+	rectangle_style_listmenu:SetSize(150,20)
 	rectangle_style_listmenu:SetPos(0,20)
 	rectangle_style_listmenu:AddChoice("legacy-like")
 	rectangle_style_listmenu:AddChoice("concentric")
@@ -2417,8 +2322,8 @@ function pace.ConfigureEventWheelMenu()
 
 	local rectangle_clickmode = vgui.Create("DComboBox",first_panel)
 	rectangle_clickmode:SetText("Choose eventlist clickmode")
-	rectangle_clickmode:SetSize(200,20)
-	rectangle_clickmode:SetPos(200,20)
+	rectangle_clickmode:SetSize(160,20)
+	rectangle_clickmode:SetPos(150,20)
 	rectangle_clickmode:AddChoice("clickable and activates on close")
 	rectangle_clickmode:AddChoice("not clickable, but activate on close")
 	rectangle_clickmode:AddChoice("clickable, but do not activate on close")
@@ -2432,6 +2337,37 @@ function pace.ConfigureEventWheelMenu()
 		end
 	end
 
+	local rectangle_fontsize = vgui.Create("DComboBox",first_panel)
+	rectangle_fontsize:SetText("Eventlist font / height")
+	rectangle_fontsize:SetSize(160,20)
+	rectangle_fontsize:SetPos(310,20)
+	for _,font in ipairs(pace.Fonts) do
+		rectangle_fontsize:AddChoice(font)
+	end
+
+	function rectangle_fontsize:OnSelect( index, value )
+		GetConVar("pac_eventlist_font"):SetString(value)
+	end
+
+	local circle_fontsize = vgui.Create("DComboBox",first_panel)
+	circle_fontsize:SetText("Eventwheel font size")
+	circle_fontsize:SetSize(160,20)
+	circle_fontsize:SetPos(310,0)
+	for _,font in ipairs(pace.Fonts) do
+		circle_fontsize:AddChoice(font)
+	end
+
+	function circle_fontsize:OnSelect( index, value )
+		GetConVar("pac_eventwheel_font"):SetString(value)
+	end
+
+	local customizer_button_box = vgui.Create("DCheckBox",first_panel)
+	customizer_button_box:SetTooltip("Show the Customize button when eventwheels are active")
+	customizer_button_box:SetSize(20,20)
+	customizer_button_box:SetPos(470,0)
+	customizer_button_box:SetConVar("pac_eventwheel_show_customize_button")
+
+
 	local events = {}
 	for i,v in pairs(pac.GetLocalParts()) do
 		if v.ClassName == "event" then
@@ -2442,12 +2378,12 @@ function pace.ConfigureEventWheelMenu()
 				events[cmd] = cmd
 			end
 		end
-		
+
 	end
 
 	local names = table.GetKeys( events )
 	table.sort(names, function(a, b) return a < b end)
-	
+
 	local copied_color = nil
 	local lanes = {}
 	local colorpanel
@@ -2463,7 +2399,7 @@ function pace.ConfigureEventWheelMenu()
 		for _, name in ipairs(names) do
 			local pnl = vgui.Create("DPanel") list:Add(pnl) pnl:SetSize(400,20)
 			local btn = vgui.Create("DButton", pnl)
-			
+
 			btn:SetSize(200,25)
 			btn:SetText(name)
 			btn:SetTooltip(name)
@@ -2490,13 +2426,13 @@ function pace.ConfigureEventWheelMenu()
 					local str_tbl = string.Split(pace.command_colors[name], " ")
 					clr_pnl:SetBaseColor(Color(tonumber(str_tbl[1]),tonumber(str_tbl[2]),tonumber(str_tbl[3])))
 				end
-				
+
 				clr_frame:SetSize(300,200) clr_pnl:Dock(FILL)
 				clr_frame:SetPos(self:LocalToScreen(0,0))
 				clr_frame:RequestFocus()
 				function clr_pnl:Think()
 					if input.IsMouseDown(MOUSE_LEFT) then
-						
+
 						if not IsValid(vgui.GetHoveredPanel()) then
 							self:Remove() clr_frame:Remove()
 						else
@@ -2514,7 +2450,7 @@ function pace.ConfigureEventWheelMenu()
 					pace.command_colors[name] = col.r .. " " .. col.g .. " " .. col.b
 					btn:SetColor(col)
 				end
-				
+
 			end
 
 			local copypastebutton = vgui.Create("DButton", pnl)
@@ -2558,8 +2494,10 @@ function pace.ConfigureEventWheelMenu()
 		gui.EnableScreenClicker(false)
 		pace.command_event_menu_opened = nil
 		encode_table_to_file("eventwheel_colors", pace.command_colors)
+		if pace.event_wheel_list_opened then pac.closeEventSelectionList(true) end
+		if pace.event_wheel_opened then pac.closeEventSelectionWheel(true) end
 	end
-	
+
 	master_panel:RequestFocus()
 	gui.EnableScreenClicker(true)
 	pace.command_event_menu_opened = master_panel
@@ -2569,9 +2507,22 @@ end
 decode_table_from_file("pac_editor_shortcuts")
 decode_table_from_file("pac_editor_partmenu_layouts")
 decode_table_from_file("eventwheel_colors")
+decode_table_from_file("pinned_properties")
+if not pace.pinned_properties then
+	pace.pinned_properties = {
+		"Name",
+		"Hide",
+		"Bone", "Position", "Angles",
+		"Notes"
+	}
+end
 
-if not file.Exists("pac_part_categories_cedrics.txt", "DATA") then
-	file.Write("pac3_config/pac_part_categories_cedrics.txt", util.TableToKeyValues(pace.partmenu_categories_cedrics))
+function pac.UpdateConfigFile(str)
+	encode_table_to_file(str)
+end
+
+if not file.Exists("pac_part_categories_experimental.txt", "DATA") then
+	file.Write("pac3_config/pac_part_categories_experimental.txt", util.TableToKeyValues(pace.partmenu_categories_experimental))
 end
 if not file.Exists("pac_part_categories_default.txt", "DATA") then
 	file.Write("pac3_config/pac_part_categories_default.txt", util.TableToKeyValues(pace.partmenu_categories_default))

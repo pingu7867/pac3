@@ -15,8 +15,10 @@ language.Add("pac_projectile", "Projectile")
 local BUILDER, PART = pac.PartTemplate("base_movable")
 
 PART.ClassName = "projectile"
-PART.Group = "advanced"
+PART.Group = {"advanced", "combat"}
 PART.Icon = "icon16/bomb.png"
+
+PART.ImplementsDoubleClickSpecified = true
 
 BUILDER:StartStorableVars()
 	BUILDER:SetPropertyGroup("Firing")
@@ -24,22 +26,24 @@ BUILDER:StartStorableVars()
 		BUILDER:GetSet("AddOwnerSpeed", false)
 		BUILDER:GetSet("Spread", 0)
 		BUILDER:GetSet("NumberProjectiles", 1)
-		BUILDER:GetSet("Delay", 0)
+		BUILDER:GetSet("Delay", 0, {editor_clamp = {0,80}})
 		BUILDER:GetSet("Maximum", 0)
 		BUILDER:GetSet("RandomAngleVelocity", Vector(0,0,0))
 		BUILDER:GetSet("LocalAngleVelocity", Vector(0,0,0))
 	BUILDER:SetPropertyGroup("Physics")
-		BUILDER:GetSet("Mass", 100)
+		BUILDER:GetSet("Freeze", false, {description = "frozen like physgun"})
+		BUILDER:GetSet("Mass", 100, {editor_clamp = {0,50000}}) --there's actually a 50k limit
+		BUILDER:GetSet("ImpactSounds", true, {description = "allow physics impact sounds, applies to physical projectiles"})
 		BUILDER:GetSet("SurfaceProperties", "default", {enums = physprop_enums})
 		BUILDER:GetSet("RescalePhysMesh", false, {description = "experimental! tries to scale the collide mesh by the radius! Stay within  small numbers! 1 radius should be associated with a full-size model"})
 		BUILDER:GetSet("OverridePhysMesh", false, {description = "experimental! tries to redefine the projectile's model to change the physics mesh"})
-		BUILDER:GetSet("FallbackSurfpropModel", "models/props_junk/PopCan01a.mdl")
+		BUILDER:GetSet("FallbackSurfpropModel", "models/props_junk/PopCan01a.mdl", {editor_friendly = "collide mesh", editor_panel = "model"})
 		BUILDER:GetSet("Damping", 0)
 		BUILDER:GetSet("Gravity", true)
 		BUILDER:GetSet("Collisions", true)
 		BUILDER:GetSet("Sphere", false)
 		BUILDER:GetSet("Radius", 1, {editor_panel = "projectile_radii"})
-		BUILDER:GetSet("Bounce", 0)
+		BUILDER:GetSet("Bounce", 0, {editor_clamp = {-160,160}})
 		BUILDER:GetSet("Sticky", false)
 		BUILDER:GetSet("CollideWithOwner", false)
 		BUILDER:GetSet("CollideWithSelf", false)
@@ -254,6 +258,7 @@ function PART:Shoot(pos, ang, multi_projectile_count)
 			net.WriteBool(self.RemoveOnCollide)
 			net.WriteBool(self.CollideWithOwner)
 			net.WriteBool(self.RemoveOnHide)
+			net.WriteBool(self.RescalePhysMesh)
 			net.WriteBool(self.OverridePhysMesh)
 			net.WriteBool(self.Gravity)
 			net.WriteBool(self.AddOwnerSpeed)
@@ -263,6 +268,8 @@ function PART:Shoot(pos, ang, multi_projectile_count)
 			net.WriteBool(self.DrawShadow)
 			net.WriteBool(self.Sticky)
 			net.WriteBool(self.BulletImpact)
+			net.WriteBool(self.Freeze)
+			net.WriteBool(self.ImpactSounds)
 
 			--vectors
 			net.WriteVector(self.RandomAngleVelocity)
@@ -276,19 +283,26 @@ function PART:Shoot(pos, ang, multi_projectile_count)
 			net.WriteUInt(attract_ids[self.AttractMode] or 2,3)
 
 			--numbers
-			net.WriteUInt(self.Radius,8)
-			net.WriteUInt(self.DamageRadius,10)
+			local using_decimal = (self.Radius % 1 ~= 0) and self.RescalePhysMesh
+			net.WriteBool(using_decimal)
+			if using_decimal then
+				net.WriteFloat(self.Radius)
+			else
+				net.WriteUInt(self.Radius,12)
+			end
+			
+			net.WriteUInt(self.DamageRadius,12)
 			net.WriteUInt(self.Damage,24)
-			net.WriteUInt(1000*self.Speed,16)
+			net.WriteInt(1000*self.Speed,18)
 			net.WriteUInt(self.Maximum,7)
 			net.WriteUInt(100*self.LifeTime,14) --might need decimals
-			net.WriteUInt(100*self.Delay,9) --might need decimals
-			net.WriteUInt(self.Mass,18)
+			net.WriteUInt(100*self.Delay,13) --might need decimals
+			net.WriteUInt(self.Mass,16)
 			net.WriteInt(100*self.Spread,10)
 			net.WriteInt(100*self.Damping,20) --might need decimals
 			net.WriteInt(self.Attract,14)
 			net.WriteUInt(self.AttractRadius,10)
-			net.WriteInt(100*self.Bounce,8) --might need decimals
+			net.WriteInt(100*self.Bounce,15) --might need decimals
 
 		net.SendToServer()
 	else
@@ -363,6 +377,15 @@ function PART:Shoot(pos, ang, multi_projectile_count)
 				ent:PhysicsInitSphere(math.Clamp(self.Radius, 1, 500), self.SurfaceProperties)
 			else
 				ent:PhysicsInitBox(Vector(1,1,1) * - math.Clamp(self.Radius, 1, 500), Vector(1,1,1) * math.Clamp(self.Radius, 1, 500), self.SurfaceProperties)
+				if self.OverridePhysMesh then
+					local valid_fallback = util.IsValidModel( self.FallbackSurfpropModel ) and not IsUselessModel(self.FallbackSurfpropModel)
+					ent:PhysicsInitBox(Vector(1,1,1) * - math.Clamp(self.Radius, 1, 500), Vector(1,1,1) * math.Clamp(self.Radius, 1, 500), self.FallbackSurfpropModel)
+					if self.OverridePhysMesh and valid_fallback then
+						ent:SetModel(self.FallbackSurfpropModel)
+						ent:PhysicsInit(SOLID_VPHYSICS)
+						ent:GetPhysicsObject():SetMaterial(self.SurfaceProperties)
+					end
+				end
 			end
 
 			ent.RenderOverride = function()
@@ -397,7 +420,7 @@ function PART:Shoot(pos, ang, multi_projectile_count)
 			ent:SetCollisionGroup(COLLISION_GROUP_PROJECTILE)
 
 			if self:AttachToEntity(ent, false) then
-				
+
 				timer.Simple(math.Clamp(self.LifeTime, 0, 10), function()
 					if ent:IsValid() then
 						if ent.pac_projectile_part and ent.pac_projectile_part:IsValid() then
@@ -409,10 +432,10 @@ function PART:Shoot(pos, ang, multi_projectile_count)
 						end)
 					end
 				end)
-				
+
 			end
-			
-			
+
+
 		end
 
 		if self.Delay == 0 then
@@ -425,8 +448,8 @@ function PART:Shoot(pos, ang, multi_projectile_count)
 	end
 end
 
-function PART:SetDamage(val)
-
+function PART:OnDoubleClickSpecified()
+	self:Shoot()
 end
 
 function PART:SetRadius(val)
@@ -474,6 +497,8 @@ function PART:SetMass(val)
 	local sv_max = GetConVar("pac_sv_projectile_max_mass"):GetInt()
 	if self.Mass > sv_max then
 		self:SetInfo("Your mass is beyond the server's maximum permitted! Server max is " .. sv_max)
+	elseif val > 50000 then
+		self:SetInfo("The game has a maximum of 50k mass")
 	else
 		self:SetInfo(nil)
 	end
@@ -494,7 +519,7 @@ pac.AddHook("Think", "pac_cleanup_CS_projectiles", function()
 		if ent.pac_projectile_part == rootpart then
 			local tbl = ent.pac_projectile_part:GetChildren()
 			local partchild = tbl[next(tbl)] --ent.pac_projectile_part is the root group, but outfit part is the first child
-			
+
 			if IsValid(partchild) then
 				if partchild:IsHidden() then
 					SafeRemoveEntity(ent)
@@ -574,11 +599,11 @@ do -- physical
 							net.Start("pac_projectile_remove")
 							net.WriteInt(ent_id, 16)
 							net.SendToServer()
-							
+
 						end
 					end
 				end
-				
+
 			end
 		end
 	end)

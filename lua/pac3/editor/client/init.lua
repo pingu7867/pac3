@@ -93,6 +93,7 @@ local showInEditor = CreateConVar("pac_show_in_editor", "1", {FCVAR_ARCHIVE}, "S
 pace.pac_show_uniqueid = CreateConVar("pac_show_uniqueid", "0", {FCVAR_ARCHIVE}, "Show uniqueids of parts inside editor")
 
 function pace.OpenEditor()
+	if not pac.LocalPlayer then pac.LocalPlayer = LocalPlayer() end
 	pace.CloseEditor()
 
 	if hook.Run("PrePACEditorOpen", pac.LocalPlayer) == false then return end
@@ -135,10 +136,10 @@ function pace.OpenEditor()
 			editor:SetPos(0, 0)
 		end
 	end
-	
+
 	if remember_divider:GetBool() then
 		pace.vertical_div_height = pace.vertical_div_height or ScrH()/1.4
-		
+
 		timer.Simple(0, function()
 			editor.div:SetTopHeight(pace.vertical_div_height)
 		end)
@@ -221,7 +222,7 @@ function pace.Panic()
 		if ent:IsValid() then
 			ent.pac_onuse_only = nil
 			ent.pac_onuse_only_check = nil
-			hook.Remove('pace_OnUseOnlyUpdates', ent)
+			pac.RemoveHook("pace_OnUseOnlyUpdates", ent)
 		end
 	end
 end
@@ -313,8 +314,8 @@ do
 
 	local up = Vector(0,0,10000)
 
-	hook.Add("HUDPaint", "pac_in_editor", function()
-		for _, ply in ipairs(player.GetAll()) do
+	pac.AddHook("HUDPaint", "in_editor", function()
+		for _, ply in player.Iterator() do
 			if ply ~= pac.LocalPlayer and ply:GetNW2Bool("pac_in_editor") then
 
 				if showCameras:GetInt() == 1 then

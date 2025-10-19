@@ -13,11 +13,54 @@ local BAR_SIZE = 17
 local RENDERSCORE_SIZE = 20
 
 local use_tabs = CreateClientConVar("pac_property_tabs", 1, true)
+local pins = CreateClientConVar("pac_editor_pins", 1, true)
+local pins_button = CreateClientConVar("pac_editor_pins_show_button", 1, true)
 
 local zoom_persistent = CreateClientConVar("pac_zoom_persistent", 0, true, false, 'Keep zoom between sessions.')
 local zoom_mousewheel = CreateClientConVar("pac_zoom_mousewheel", 0, true, false, 'Enable zooming with mouse wheel.')
 local zoom_smooth = CreateClientConVar("pac_zoom_smooth", 0, true, false, 'Enable smooth zooming.')
+
 local remember_divider = CreateConVar("pac_editor_remember_divider_height", "0", {FCVAR_ARCHIVE}, "Remember PAC3 editor's vertical divider position")
+local remember_width = CreateConVar("pac_editor_remember_width", "0", {FCVAR_ARCHIVE}, "Remember PAC3 editor's width")
+
+function pace.RefreshZoomBounds(zoomslider)
+	if not IsValid(zoomslider) then return end
+	if pace.Editor then
+		if not zoomslider then
+			zoomslider = pace.Editor.zoomslider
+		end
+		if pace.camera_orthographic then
+			zoomslider:SetMin(-10000)
+			zoomslider:SetMax(10000)
+		else
+			zoomslider:SetMin(0)
+			zoomslider:SetMax(pace.max_fov)
+			timer.Simple(0, function() zoomslider:SetValue(math.Clamp(pace.ViewFOV, 0, pace.max_fov)) end)
+		end
+	end
+end
+
+local function resize_properties(self)
+	local w = self:GetWide()
+	surface.SetFont(pace.CurrentFont)
+	local _,h = surface.GetTextSize("|")
+	local baseline = self.properties2.line_heights or 125
+	local total_h = ScrH() - self.div:GetTopHeight()
+	self.props_shared_pnl:SetSize(w, total_h)
+	if pins:GetBool() then
+		local baseline = self.properties2.line_heights or 125
+		baseline = baseline + self.font_h
+
+		self.properties_pnl_holder:SetPos(0,baseline + h)
+		self.properties2_pnl_holder:SetPos(0,self.font_h)
+	
+		self.properties_pnl_holder:SetSize(w - 4, total_h - baseline - 2*h - 22)
+		self.properties2_pnl_holder:SetSize(w - 4, baseline)
+	else
+		self.properties_pnl_holder:SetPos(0,0)
+		self.properties_pnl_holder:SetSize(w - 4, total_h - h - 22)
+	end
+end
 
 function PANEL:Init()
 	self:SetTitle("")
@@ -43,8 +86,14 @@ function PANEL:Init()
 	self.treePanel = pace.CreatePanel("tree")
 	self:SetTop(self.treePanel)
 
-	local pnl = pace.CreatePanel("properties", div)
+	local props_shared_pnl = vgui.Create("DPanel", div)
+	self.props_shared_pnl = props_shared_pnl
+	local properties_pnl_holder = vgui.Create("DPanel", props_shared_pnl)
+	local pnl = pace.CreatePanel("properties", properties_pnl_holder)
+	pnl:Dock(FILL)
 	pace.properties = pnl
+	self.properties = pnl
+	self.properties_pnl_holder = properties_pnl_holder
 
 	self.exit_button = vgui.Create("DButton")
 	self.exit_button:SetText("")
@@ -102,6 +151,54 @@ function PANEL:Init()
 			self.smoothlabel:SetWrap(true)
 			self.smoothlabel:SetAutoStretchVertical(true)
 
+			self.limitfovcheckbox = vgui.Create("DCheckBoxLabel", self.zoomsettings)
+			self.limitfovcheckbox:SetText("Expanded FOV")
+			self.limitfovcheckbox:SetChecked(pace.max_fov ~= 100)
+			self.limitfovcheckbox:Dock(TOP)
+			self.limitfovcheckbox:SetDark(true)
+			self.limitfovcheckbox:DockMargin(0,SETTING_MARGIN_TOP,0,0)
+
+
+			self.orthocheckbox = vgui.Create("DCheckBoxLabel", self.zoomsettings)
+			self.orthocheckbox:SetText("Orthographic")
+			self.orthocheckbox:Dock(TOP)
+			self.orthocheckbox:SetDark(true)
+			self.orthocheckbox:DockMargin(0,SETTING_MARGIN_TOP,0,0)
+			self.orthocheckbox:SetConVar("pac_camera_orthographic")
+			self.orthocheckbox:SetTooltip("Orthographic view projects parallel rays perpendicular to a rectangle. Instead of degrees, it is in terms of distance units (Hammer Units)\n\nThere are still —possibly engine-related— issues where objects and world geometry can disapear if looking from the wrong angle due to culling. Especially worse in tight spaces.")
+
+			self.ortholabel = vgui.Create("DLabel", self.zoomsettings)
+			self.ortholabel:Dock(TOP)
+			self.ortholabel:SetDark(true)
+			self.ortholabel:SetText("Enable orthographic view.")
+			self.ortholabel:SetWrap(true)
+			self.ortholabel:SetAutoStretchVertical(true)
+
+			self.ortho_nearz = vgui.Create("DNumSlider", self.zoomsettings)
+			self.ortho_nearz:Dock(TOP)
+			self.ortho_nearz:SetMin( 0 )
+			self.ortho_nearz:SetMax( 5000 )
+			self.ortho_nearz:SetDecimals( 1 )
+			self.ortho_nearz:SetText("NearZ")
+			self.ortho_nearz:SetDark(true)
+			self.ortho_nearz:SetDefaultValue( 0 )
+			self.ortho_nearz:SetValue( 0 )
+
+			self.ortho_farz = vgui.Create("DNumSlider", self.zoomsettings)
+			self.ortho_farz:Dock(TOP)
+			self.ortho_farz:SetMin( 0 )
+			self.ortho_farz:SetMax( 64000 )
+			self.ortho_farz:SetDecimals( 1 )
+			self.ortho_farz:SetText("FarZ")
+			self.ortho_farz:SetDark(true)
+			self.ortho_farz:SetDefaultValue( 64000 )
+			self.ortho_farz:SetValue( 64000 )
+			if not pace.camera_orthographic then
+				self.ortho_nearz:Hide()
+				self.ortho_farz:Hide()
+			end
+
+
 		self.sliderpanel = vgui.Create("DPanel", self.zoomframe)
 		self.sliderpanel:SetSize(180, 20)
 		self.sliderpanel:Dock(TOP)
@@ -109,10 +206,12 @@ function PANEL:Init()
 			self.zoomslider = vgui.Create("DNumSlider", self.sliderpanel)
 			self.zoomslider:DockPadding(4,0,0,0)
 			self.zoomslider:SetSize(200, 20)
-			self.zoomslider:SetMin( 0 )
-			self.zoomslider:SetMax( 100 )
 			self.zoomslider:SetDecimals( 0 )
 			self.zoomslider:SetText("Camera FOV")
+			if pace.camera_orthographic then
+				self.zoomslider:SetText("Ortho. Width")
+			end
+			pace.RefreshZoomBounds(self.zoomslider)
 			self.zoomslider:SetDark(true)
 			self.zoomslider:SetDefaultValue( 75 )
 
@@ -121,13 +220,77 @@ function PANEL:Init()
 			else
 				self.zoomslider:SetValue( 75 )
 			end
+			local zoomslider = self.zoomslider
+			function self.limitfovcheckbox:OnChange(b)
+				if b then
+					pace.max_fov = 179
+				else
+					pace.max_fov = 100
+				end
+				pace.RefreshZoomBounds(zoomslider)
+			end
 
 	self.btnClose.Paint = function() end
 
-	self:SetBottom(pnl)
+	self:SetBottom(props_shared_pnl)
+	local clr = self:GetSkin().control_color_active --Color(70,200,255)
+	local _,font_h = surface.GetTextSize("|")
+	self.font_h = font_h + 2
+	self.props_shared_pnl.Paint = function(self, w, h)
+		if not pins:GetBool() then return end
+		surface.SetFont(pace.CurrentFont)
+		local _,font_h = surface.GetTextSize("|")
+		self.font_h = font_h + 2
+	    draw.RoundedBox(2, 0, 0, w, font_h + 5, clr)
+		draw.SimpleText("pinned", pace.CurrentFont, 5, 0, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+	end
+	local properties2_pnl_holder = vgui.Create("DPanel", props_shared_pnl)
+	local pnl2 = pace.CreatePanel("properties", properties2_pnl_holder)
+	local collapse_pin_btn = vgui.Create("DButton", props_shared_pnl)
+	self.collapse_pin_btn = collapse_pin_btn
+	collapse_pin_btn:SetSize(self.font_h,self.font_h) collapse_pin_btn:SetImage("icon16/arrow_down.png") collapse_pin_btn:SetText("") collapse_pin_btn:SetTooltip("expand/collapse pinned properties")
+	function collapse_pin_btn:DoClick()
+		pins:SetBool(not pins:GetBool())
+		--notify once
+		if not self.clicked_once then pace.FlashNotification("you can hide the button by right clicking it") self.clicked_once = true end
+	end
+	function collapse_pin_btn:DoRightClick()
+		local menu = DermaMenu()
+		menu:SetPos(input.GetCursorPos())
+		menu:AddOption("disable the pins collapser button", function()
+			pins_button:SetBool(false)
+			pace.FlashNotification("to re-enable the button display, run pac_editor_pins_show_button 1")
+		end)
+		menu:AddOption("replace the pins collapser button with a keyboard shortcut", function()
+			pins_button:SetBool(false)
+			pace.OpenSettings("Editor menu Settings")
+			timer.Simple(0.5, function()
+				GetConVar("pac_editor_shortcuts_legacy_mode"):SetBool(true)
+				pace.shortcutaction_choices:ChooseOptionID(table.KeyFromValue(pace.PACActionShortcut_Dictionary, "toggle_pins"))
+				Derma_StringRequest("bind request", "Pick a bind for toggle_pins", "TAB", function(str) pace.AssignEditorShortcut("toggle_pins", {[1] = str}, 1) end)
+			end)
+		end)
+	end
+
+	pnl2:Dock(FILL)
+	pnl2.is_pins = true
+	self.collapse_pin_btn = collapse_pin_btn
+	pace.properties2 = pnl2
+	self.properties2 = pnl2
+	pnl.pins_counterpart = pnl2
+	self.properties2_pnl_holder = properties2_pnl_holder
 
 	self:SetCookieName("pac3_editor")
 	self:SetPos(self:GetCookieNumber("x"), BAR_SIZE)
+
+	if remember_width:GetBool() then
+		self.init_w = math.max(self:GetCookieNumber("width"), 200)
+	else
+		self.init_w = 280
+	end
+	if remember_divider:GetBool() then
+		pace.vertical_div_height = self:GetCookieNumber("y_divider")
+	end
 
 	self:MakeBar()
 	self.lastTopBarHover = 0
@@ -176,7 +339,11 @@ function PANEL:OnRemove()
 	if remember_divider:GetBool() then
 		pace.vertical_div_height = self.div:GetTopHeight()
 	end
-	
+
+	if remember_width:GetBool() then
+		pace.editor_width = math.max(self:GetWide(), 200)
+	end
+
 	if self.menu_bar:IsValid() then
 		self.menu_bar:Remove()
 	end
@@ -197,6 +364,29 @@ end
 function PANEL:Think(...)
 	if not self.okay then return end
 	DFrame.Think(self, ...)
+	
+	surface.SetFont(pace.CurrentFont)
+	local _,h = surface.GetTextSize("|")
+	if pins:GetBool() then
+		self.properties2_pnl_holder:Show()
+		self.properties2:KillFocus()
+
+		self.collapse_pin_btn:SetPos(self:GetWide() - self.font_h - 4, 0)
+		self.collapse_pin_btn:SetSize(self.font_h, self.font_h)
+		self.collapse_pin_btn:SetImage("icon16/arrow_down.png")
+	else
+		self.properties2_pnl_holder:Hide()
+
+		self.collapse_pin_btn:SetPos(self:GetWide() - self.font_h - 4, 0)
+		self.collapse_pin_btn:SetSize(self.font_h, self.font_h)
+		self.collapse_pin_btn:SetImage("icon16/arrow_up.png")
+	end
+	resize_properties(self)
+	if not pins_button:GetBool() then
+		self.collapse_pin_btn:Hide()
+	else
+		self.collapse_pin_btn:Show()
+	end
 
 	if self.Hovered and self.m_bSizable and gui.MouseX() > (self.x + self:GetWide() - 20) then
 		self:SetCursor("sizewe")
@@ -212,12 +402,26 @@ function PANEL:Think(...)
 
 	self:SetTall(ScrH() - (self.y_offset or 0))
 	local w = math.max(self:GetWide(), 200)
+
+	--wtf the GetWide isn't saved on Init??? I have to do this?
+	if self.init_w then
+		w = self.init_w
+		self.init_w = nil
+	end
 	self:SetWide(w)
 	self:SetPos(math.Clamp(self:GetPos(), 0, ScrW() - w), (self.y_offset or 0))
 
 	if x ~= self.last_x then
 		self:SetCookie("x", x)
 		self.last_x = x
+	end
+	if w ~= self.last_w then
+		self:SetCookie("width", w)
+		self.last_w = w
+	end
+	if pace.vertical_div_height ~= self.last_vertical_div_height then
+		self:SetCookie("y_divider", pace.vertical_div_height)
+		self.last_vertical_div_height = pace.vertical_div_height
 	end
 
 	if self.exit_button:IsValid() then
@@ -274,7 +478,7 @@ function PANEL:Think(...)
 		else
 			self.zoomsettings:SetVisible(false)
 		end
-		
+
 
 	end
 end
@@ -317,7 +521,7 @@ function PANEL:PerformLayout()
 					end
 				end
 			elseif sz >= 1 then
-				
+
 				if remember_divider:GetBool() then
 					if remember_divider:GetBool() then
 						self.div:SetTopHeight(pace.vertical_div_height)
@@ -330,6 +534,7 @@ function PANEL:PerformLayout()
 			end
 		end
 	end
+	resize_properties(self)
 end
 
 function PANEL:SetTop(pnl)

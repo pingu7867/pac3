@@ -44,7 +44,16 @@ pace.PACActionShortcut_Dictionary = {
 	"toolbar_view",
 	"toolbar_options",
 	"zoom_panel",
+	"reset_zoom",
+	"reset_view_position",
+	"view_orthographic",
+	"view_follow_entity",
+	"view_follow_entity_ang_frontback",
+	"view_follow_entity_sideview",
+	"reset_eyeang",
+	"reset_eyeang_pitch",
 	"T_Pose",
+	"bulk_select",
 	"clear_bulkselect",
 	"copy_bulkselect",
 	"bulk_insert",
@@ -58,7 +67,11 @@ pace.PACActionShortcut_Dictionary = {
 	"bulk_paste_properties_2",
 	"bulk_hide",
 	"help_info_popup",
-	"ultra_cleanup"
+	"ultra_cleanup",
+	"arraying_menu",
+	"bulk_morph",
+	"criteria_process",
+	"toggle_pins",
 }
 
 pace.PACActionShortcut_Default = {
@@ -73,7 +86,7 @@ pace.PACActionShortcut_Default = {
 	["hide_editor"] = {
 		[1] = {"CTRL", "e"}
 	},
-	
+
 	["help_info_popup"] = {
 		[1] = {"F1"}
 	},
@@ -96,10 +109,10 @@ pace.PACActionShortcut_Default = {
 		[1] = {"DEL"}
 	},
 	["expand_all"] = {
-		
+
 	},
 	["collapse_all"] = {
-		
+
 	},
 	["undo"] = {
 		[1] = {"CTRL", "z"}
@@ -178,27 +191,49 @@ pace.PACActionShortcut_NoCTRL = {
 	}
 }
 
-pace.PACActionShortcut_Cedric = {
+pace.PACActionShortcut_Experimental = {
+	["help_info_popup"] = {
+		[1] = {"F1"}
+	},
+	["property_search_in_tree"] = {
+		[1] = {"CTRL", "f"}
+	},
 	["wear"] = {
 		[1] = {"CTRL", "n"}
+	},
+	["restart"] = {
+		[1] = {"CTRL", "ALT", "SHIFT", "r"}
+	},
+	["panic"] = {
+		[1] = {"CTRL", "ALT", "SHIFT", "p"}
 	},
 
 	["save"] = {
 		[1] = {"CTRL", "m"}
 	},
 
+	["load"] = {
+		[1] = {"SHIFT", "m"}
+	},
+
 	["hide_editor"] = {
 		[1] = {"CTRL", "e"},
 		[2] = {"INS"},
-		[3] = {"TAB"}
+		[3] = {"TAB"},
+		[4] = {"4"}
 	},
 
 	["hide_editor_visible"] = {
-		[1] = {"LALT", "e"}
+		[1] = {"ALT", "e"},
+		[2] = {"5"}
 	},
 
 	["copy"] = {
 		[1] = {"CTRL", "c"}
+	},
+
+	["copy_bulkselect"] = {
+		[1] = {"SHIFT", "CTRL", "c"}
 	},
 
 	["paste"] = {
@@ -207,14 +242,17 @@ pace.PACActionShortcut_Cedric = {
 	["cut"] = {
 		[1] = {"CTRL", "x"}
 	},
+	["bulk_insert"] = {
+		[1] = {"CTRL", "SHIFT", "v"}
+	},
 	["delete"] = {
 		[1] = {"DEL"}
 	},
-	["expand_all"] = {
-		[1] = {"x"}
+	["bulk_delete"] = {
+		[1] = {"SHIFT", "DEL"}
 	},
-	["collapse_all"] = {
-		[1] = {"c"}
+	["clear_bulkselect"] = {
+		[1] = {"CTRL", "SHIFT", "DEL"}
 	},
 	["undo"] = {
 		[1] = {"CTRL", "z"},
@@ -224,8 +262,29 @@ pace.PACActionShortcut_Cedric = {
 		[1] = {"CTRL", "y"},
 		[2] = {"i"}
 	},
-	["tpose"] = {
+	["T_Pose"] = {
 		[1] = {"CTRL", "t"}
+	},
+	["zoom_panel"] = {
+		[1] = {"ALT", "v"}
+	},
+	["toolbar_view"] = {
+		[1] = {"SHIFT", "v"}
+	},
+	["add_part"] = {
+		[1] = {"1"}
+	},
+	["partmenu"] = {
+		[1] = {"2"}
+	},
+	["bulk_select"] = {
+		[1] = {"3"}
+	},
+	["hide"] = {
+		[1] = {"CTRL", "h"}
+	},
+	["bulk_hide"] = {
+		[1] = {"SHIFT", "h"}
 	},
 	["editor_up"] = {
 		[1] = {"UPARROW"}
@@ -247,7 +306,7 @@ pace.PACActionShortcut_Cedric = {
 	}
 }
 
-pace.PACActionShortcut = pace.PACActionShortcut or pace.PACActionShortcut_Cedric
+pace.PACActionShortcut = pace.PACActionShortcut or pace.PACActionShortcut_Experimental
 
 --pace.PACActionShortcut = pace.PACActionShortcuts_NoCTRL
 
@@ -282,10 +341,13 @@ local last = 0
 pace.passthrough_keys = {
 	[KEY_LWIN] = true,
 	[KEY_RWIN] = true,
-	[KEY_CAPSLOCK] = true,
-	[KEY_CAPSLOCKTOGGLE] = true
+	[KEY_CAPSLOCK] = true
 }
-
+pace.shortcuts_ignored_keys = {
+	[KEY_CAPSLOCKTOGGLE] = true,
+	[KEY_NUMLOCKTOGGLE] = true,
+	[KEY_SCROLLLOCKTOGGLE] = true
+}
 
 function pace.LookupShortcutsForAction(action, provided_inputs, do_it)
 	pace.BulkSelectKey = input.GetKeyCode(GetConVar("pac_bulk_select_key"):GetString())
@@ -304,17 +366,18 @@ function pace.LookupShortcutsForAction(action, provided_inputs, do_it)
 		end
 		return true
 	end
-	
+
 	local function shortcut_contains_counterexample(combo, action, inputs)
-		
+
 		local counterexample = false
 		for key,bool in ipairs(inputs) do --check the input for counter-examples
 			if input.IsKeyDown(key) then
+				if pace.shortcuts_ignored_keys[key] then continue end
 				if not table.HasValue(combo, input.GetKeyName(key)) then --any keypress that is not in the combo invalidates the combo
 					--some keys don't count as counterexamples??
 					--random windows or capslocktoggle keys being pressed screw up the input
 					--bulk select should allow rolling select with the scrolling options
-					
+
 					if key == pace.BulkSelectKey and not action == "editor_up" and not action == "editor_down" and not action == "editor_pageup" and not action == "editor_pagedown" then
 						counterexample = true
 					elseif not pace.passthrough_keys[key] and key ~= pace.BulkSelectKey then
@@ -325,12 +388,12 @@ function pace.LookupShortcutsForAction(action, provided_inputs, do_it)
 						counterexample = false
 					end
 				end
-				
+
 			end
 		end
 		return counterexample
 	end
-	
+
 	if not pace.PACActionShortcut[action] then return false end
 	local final_success = false
 
@@ -343,7 +406,7 @@ function pace.LookupShortcutsForAction(action, provided_inputs, do_it)
 		if pace.PACActionShortcut[action][i] then --is there a combo in that slot
 			combo = pace.PACActionShortcut[action][i]
 			local keynames_str = ""
-			
+
 			local single_match = false
 			if input_contains_one_match(combo, action, provided_inputs) then
 				single_match = true
@@ -359,13 +422,13 @@ function pace.LookupShortcutsForAction(action, provided_inputs, do_it)
 			end
 		end
 	end
-	
+
 	return final_success
 end
 
 function pace.AssignEditorShortcut(action, tbl, index)
 	print("received a new shortcut assignation")
-	
+
 	pace.PACActionShortcut[action] = pace.PACActionShortcut[action] or {}
 	pace.PACActionShortcut[action][index] = pace.PACActionShortcut[action][index] or {}
 
@@ -400,7 +463,7 @@ function pace.DoShortcutFunc(action)
 	if action == "redo" then pace.Redo(pace.current_part) pace.delayshortcuts = RealTime() end
 	if action == "undo" then pace.Undo(pace.current_part) pace.delayshortcuts = RealTime() end
 	if action == "delete" then pace.RemovePart(pace.current_part) end
-	if action == "hide" then pace.current_part:SetHide(not pace.current_part:GetHide()) end
+	if action == "hide" then pace.current_part:SetHide(not pace.current_part:GetHide()) pace.PopulateProperties(pace.current_part) end
 
 	if action == "copy" then pace.Copy(pace.current_part) end
 	if action == "cut" then pace.Cut(pace.current_part) end
@@ -476,37 +539,37 @@ function pace.DoShortcutFunc(action)
 			icon:SetImage(pace.MiscIcons.load)
 			add_expensive_submenu_load(icon, function() pace.AddSavedPartsToMenu(menu, true) end)
 		end
-		
+
 		menu:SetMaxHeight(ScrH() - y)
 		menu:MakePopup()
-		
+
 	end
 	if action == "wear" then pace.Call("ShortcutWear") end
 
-	if action == "hide_editor" then pace.Call("ToggleFocus") pace.delaymovement = RealTime() pace.delaybulkselect = RealTime() end
-	if action == "hide_editor_visible" then pace.Call("ToggleFocus", true) end
+	if action == "hide_editor" and not (pace.ActiveSpecialPanel and pace.ActiveSpecialPanel.luapad) then pace.Call("ToggleFocus") pace.delaymovement = RealTime() pace.delaybulkselect = RealTime() end
+	if action == "hide_editor_visible" and not (pace.ActiveSpecialPanel and pace.ActiveSpecialPanel.luapad) then pace.Call("ToggleFocus", true) end
 	if action == "panic" then pac.Panic() end
 	if action == "restart" then RunConsoleCommand("pac_restart") end
 	if action == "collapse_all" then
-		
+
 		local part = pace.current_part
 
 		if not part or not part:IsValid() then
 			pace.FlashNotification('No part to collapse')
 		else
-			
+
 		end
 		part:CallRecursive('SetEditorExpand', GetConVar("pac_reverse_collapse"):GetBool())
 		pace.RefreshTree(true)
 	end
 	if action == "expand_all" then
-		
+
 		local part = pace.current_part
 
 		if not part or not part:IsValid() then
 			pace.FlashNotification('No part to collapse')
 		else
-			
+
 		end
 		part:CallRecursive('SetEditorExpand', not GetConVar("pac_reverse_collapse"):GetBool())
 		pace.RefreshTree(true)
@@ -524,7 +587,7 @@ function pace.DoShortcutFunc(action)
 			pace.properties.search:SetEnabled(true)
 			pace.property_searching = true
 		end
-		
+
 	end
 	if action == "property_search_in_tree" then
 		if pace.tree_search_open then
@@ -558,7 +621,7 @@ function pace.DoShortcutFunc(action)
 		local x,y = input.GetCursorPos()
 		menu:SetPos(x,y)
 		pace.PopulateMenuBarTab(menu, "player")
-		
+
 	end
 	if action == "toolbar_view" then
 		menu = DermaMenu()
@@ -570,10 +633,67 @@ function pace.DoShortcutFunc(action)
 	if action == "zoom_panel" then
 		pace.PopupMiniFOVSlider()
 	end
-	
-	if action == "T_Pose" then pace.SetTPose(not pace.GetTPose()) end
+	if action == "reset_zoom" then
+		pace.ResetZoom()
+	end
+	if action == "reset_view_position" then
+		pace.ResetView()
+	end
+	if action == "view_orthographic" then
+		pace.OrthographicView()
+	end
+	if action == "view_follow_entity" then
+		GetConVar("pac_camera_follow_entity"):SetBool(not GetConVar("pac_camera_follow_entity"):GetBool())
+	end
+	if action == "reset_eyeang" then
+		pace.ResetEyeAngles()
+	elseif action == "reset_eyeang_pitch" then
+		pace.ResetEyeAngles(true)
+	end
+	if action == "view_follow_entity_ang_frontback" then
+		pace.ResetEyeAngles(true)
+		local b = GetConVar("pac_camera_follow_entity_ang"):GetBool()
+		GetConVar("pac_camera_follow_entity_ang_use_side"):SetBool(false)
+		if not b then
+			pace.view_reversed = 1
+			GetConVar("pac_camera_follow_entity_ang"):SetBool(true)
+			timer.Simple(0, function() pace.FlashNotification("view_follow_entity_ang_frontback (back)") end)
+		else
+			if pace.view_reversed == -1 then
+				GetConVar("pac_camera_follow_entity_ang"):SetBool(false)
+				timer.Simple(0, function() pace.FlashNotification("view_follow_entity_ang_frontback (disable)") end)
+			else
+				timer.Simple(0, function() pace.FlashNotification("view_follow_entity_ang_frontback (front)") end)
+			end
+			pace.view_reversed = -pace.view_reversed
+		end
+	end
+	if action == "view_follow_entity_sideview" then
+		pace.ResetEyeAngles(true)
+		local b = GetConVar("pac_camera_follow_entity_ang"):GetBool()
+		GetConVar("pac_camera_follow_entity_ang_use_side"):SetBool(true)
+		if not b then
+			pace.view_reversed = 1
+			GetConVar("pac_camera_follow_entity_ang"):SetBool(true)
+			timer.Simple(0, function() pace.FlashNotification("view_follow_entity_sideview (left)") end)
+		else
+			if pace.view_reversed == -1 then
+				GetConVar("pac_camera_follow_entity_ang"):SetBool(false)
+				timer.Simple(0, function() pace.FlashNotification("view_follow_entity_sideview (disable)") end)
+			else
+				timer.Simple(0, function() pace.FlashNotification("view_follow_entity_sideview (right)") end)
+			end
+			pace.view_reversed = -pace.view_reversed
+		end
+	end
 
+	if action == "T_Pose" or action == "t_pose" then pace.SetTPose(not pace.GetTPose()) end
+
+	if action == "bulk_select" then
+		pace.DoBulkSelect(pace.current_part)
+	end
 	if action == "clear_bulkselect" then pace.ClearBulkList() end
+	if action == "bulk_copy" then pace.BulkCopy(pace.current_part) end --deprecated keyword
 	if action == "copy_bulkselect" then pace.BulkCopy(pace.current_part) end
 	if action == "bulk_insert" then pace.BulkCutPaste(pace.current_part) end
 	if action == "bulk_delete" then pace.BulkRemovePart() end
@@ -599,13 +719,13 @@ function pace.DoShortcutFunc(action)
 			pace.PasteProperties(v)
 		end
 	end
-	if action == "bulk_hide" then pace.BulkHide() end
+	if action == "bulk_hide" then pace.BulkHide() pace.PopulateProperties(pace.current_part) end
 
 	if action == "help_info_popup" then
 		if pace.floating_popup_reserved then
 			pace.floating_popup_reserved:Remove()
 		end
-		
+
 		--[[pac.InfoPopup("Looks like you don't have an active part. You should right click and go make one to get started", {
 			obj_type = "screen",
 			clickfunc = function() pace.OnAddPartMenu(pace.current_part) end,
@@ -625,28 +745,31 @@ function pace.DoShortcutFunc(action)
 		--obj_type types
 		local popup_prefered_type = GetConVar("pac_popups_preferred_location"):GetString()
 		popup_setup_tbl.obj_type = popup_prefered_type
-		
+
 		if popup_prefered_type == "pac tree label" then
 			popup_setup_tbl.obj = pace.current_part.pace_tree_node
 			pace.floating_popup_reserved = pace.current_part:SetupEditorPopup(nil, true, popup_setup_tbl)
-		
+
 		elseif popup_prefered_type == "part world" then
 			popup_setup_tbl.obj = pace.current_part
 			pace.floating_popup_reserved = pace.current_part:SetupEditorPopup(nil, true, popup_setup_tbl)
-		
+
 		elseif popup_prefered_type == "screen" then
 			pace.floating_popup_reserved = pace.current_part:SetupEditorPopup(nil, true, popup_setup_tbl, ScrW()/2, ScrH()/2)
-		
+
 		elseif popup_prefered_type == "cursor" then
 			pace.floating_popup_reserved = pace.current_part:SetupEditorPopup(nil, true, popup_setup_tbl, input.GetCursorPos())
-		
-		elseif popup_prefered_type == "editor bar" then
+
+		elseif popup_prefered_type == "tracking cursor" then
+			pace.floating_popup_reserved = pace.current_part:SetupEditorPopup(nil, true, popup_setup_tbl, input.GetCursorPos())
+
+		elseif popup_prefered_type == "menu bar" then
 			popup_setup_tbl.obj = pace.Editor
 			pace.floating_popup_reserved = pace.current_part:SetupEditorPopup(nil, true, popup_setup_tbl)
-		
+
 		end
-		
-		
+
+
 
 
 		--[[if IsValid(pace.current_part) then
@@ -664,7 +787,21 @@ function pace.DoShortcutFunc(action)
 		pace.UltraCleanup(pace.current_part)
 	end
 
+	if action == "arraying_menu" then
+		pace.OpenArrayingMenu(pace.current_part)
+	end
 
+	if action == "bulk_morph" then
+		pace.BulkMorphProperty()
+	end
+
+	if action == "criteria_process" then
+		pace.PromptProcessPartsByCriteria(pace.current_part)
+	end
+
+	if action == "toggle_pins" then
+		GetConVar("pac_editor_pins"):SetBool(not GetConVar("pac_editor_pins"):GetBool())
+	end
 end
 
 pace.delaybulkselect = 0
@@ -676,10 +813,10 @@ pace.delaymovement = 0
 --always refresh the inputs, but check if we stay the same before checking the shortcuts!
 --
 
-skip = false
-no_input_override = false
-has_run_something = false
-previous_inputs_str = ""
+local skip = false
+local no_input_override = false
+local has_run_something = false
+local previous_inputs_str = ""
 
 function pace.CheckShortcuts()
 	if GetConVar("pac_editor_shortcuts_legacy_mode"):GetBool() then
@@ -725,13 +862,55 @@ function pace.CheckShortcuts()
 					pace.properties.search:RequestFocus()
 					pace.properties.search:SetEnabled(true)
 					pace.property_searching = true
-		
+
 					last = RealTime() + 0.2
 				else
 					pace.OpenTreeSearch()
 				end
 			end
 
+			if input.IsKeyDown(KEY_F1) then
+				last = RealTime() + 0.5
+				local new_popup = true
+				if IsValid(pace.legacy_floating_popup_reserved) then
+					new_popup = false
+					if pace.current_part ~= pace.legacy_floating_popup_reserved_part then
+						if IsValid(pace.legacy_floating_popup_reserved) then
+							pace.legacy_floating_popup_reserved:Remove()
+							pace.legacy_floating_popup_reserved = nil
+							pace.legacy_floating_popup_reserved_part = nil
+						end
+						new_popup = true
+					end
+				else
+					pace.legacy_floating_popup_reserved = nil
+					pace.legacy_floating_popup_reserved_part = nil
+				end
+
+				local popup_setup_tbl = {
+					obj_type = "",
+					clickfunc = function() pace.OnAddPartMenu(pace.current_part) end,
+					hoverfunc = "open",
+					pac_part = pace.current_part,
+					panel_exp_width = 900, panel_exp_height = 400,
+					from_legacy = true
+				}
+
+				popup_setup_tbl.obj_type = "pac tree label"
+				popup_setup_tbl.obj = pace.current_part.pace_tree_node
+
+				if new_popup then
+					local created_panel = pace.current_part:SetupEditorPopup(nil, true, popup_setup_tbl)
+					pace.legacy_floating_popup_reserved = created_panel
+					pace.legacy_floating_popup_reserved_part = pace.current_part
+				end
+				pac.AddHook("Think", "killpopupwheneditorunfocused", function()
+					if not pace:IsFocused() then
+						if IsValid(pace.legacy_floating_popup_reserved) then pace.legacy_floating_popup_reserved:Remove() end
+					end
+					if not IsValid(pace.legacy_floating_popup_reserved) then pace.legacy_floating_popup_reserved = nil end
+				end)
+			end
 		end
 		return
 	end
@@ -743,6 +922,7 @@ function pace.CheckShortcuts()
 	pace.shortcut_inputs_count = 0
 	for i=1,172,1 do --build bool list of all current keys
 		if input.IsKeyDown(i) then
+			if pace.shortcuts_ignored_keys[i] then continue end
 			if pace.passthrough_keys[i] or i == pace.BulkSelectKey then no_input_override = true end
 			input_active[i] = true
 			pace.shortcut_inputs_count = pace.shortcut_inputs_count + 1
@@ -750,33 +930,33 @@ function pace.CheckShortcuts()
 			inputs_str = inputs_str .. input.GetKeyName(i) .. " "
 		else input_active[i] = false end
 	end
-	
+
 	if previous_inputs_str ~= inputs_str then
 		if last + 0.2 > RealTime() and has_run_something then
 			skip = true
 		else
 			has_run_something = false
 		end
-		
+
 	end
 	if no_input then
 		skip = false
 	end
 	previous_inputs_str = inputs_str
 
-	
+
 	if IsValid(vgui.GetKeyboardFocus()) and vgui.GetKeyboardFocus():GetClassName():find('Text') then return end
 	if gui.IsConsoleVisible() then return end
 	if not pace.Editor or not pace.Editor:IsValid() then return end
-	
-	
+
+
 	if skip and not no_input_override then return end
-	
+
 	local starttime = SysTime()
-	
+
 	for action,list_of_lists in pairs(pace.PACActionShortcut) do
 		if not has_run_something then
-			if action == "hide_editor" and pace.LookupShortcutsForAction(action, input_active, true) then --we can focus back if editor is not focused
+			if (action == "hide_editor" or action == "hide_editor_visible") and pace.LookupShortcutsForAction(action, input_active, true) then --we can focus back if editor is not focused
 				--pace.DoShortcutFunc(action)
 				last = RealTime()
 				has_run_something = true
@@ -790,7 +970,7 @@ function pace.CheckShortcuts()
 			end
 		end
 	end
-	
+
 end
 
 pac.AddHook("Think", "pace_shortcuts", pace.CheckShortcuts)
@@ -980,7 +1160,7 @@ do
 	end
 
 	pac.AddHook("Think", "pace_keyboard_shortcuts", function()
-		
+
 		if not pace.IsActive() then return end
 		if not pace.Focused then return end
 		if IsValid(vgui.GetKeyboardFocus()) and vgui.GetKeyboardFocus():GetClassName():find('Text') then return end
