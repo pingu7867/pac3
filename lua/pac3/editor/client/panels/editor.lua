@@ -25,6 +25,7 @@ local remember_width = CreateConVar("pac_editor_remember_width", "0", {FCVAR_ARC
 
 function pace.RefreshZoomBounds(zoomslider)
 	if not IsValid(zoomslider) then return end
+	if not zoomslider.SetMin then return end
 	if pace.Editor then
 		if not zoomslider then
 			zoomslider = pace.Editor.zoomslider
@@ -35,7 +36,10 @@ function pace.RefreshZoomBounds(zoomslider)
 		else
 			zoomslider:SetMin(0)
 			zoomslider:SetMax(pace.max_fov)
-			timer.Simple(0, function() zoomslider:SetValue(math.Clamp(pace.ViewFOV, 0, pace.max_fov)) end)
+			timer.Simple(0, function()
+				if not IsValid(zoomslider) then return end
+				zoomslider:SetValue(math.Clamp(pace.ViewFOV, 0, pace.max_fov))
+			end)
 		end
 	end
 end
@@ -291,7 +295,7 @@ function PANEL:Init()
 	if remember_divider:GetBool() then
 		pace.vertical_div_height = self:GetCookieNumber("y_divider")
 	end
-
+	pace.problems_reported = {}
 	self:MakeBar()
 	self.lastTopBarHover = 0
 	self.rendertime_data = {}

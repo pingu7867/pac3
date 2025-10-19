@@ -62,6 +62,12 @@ local bulk_select_subsume = CreateConVar("pac_bulk_select_subsume", "1", FCVAR_A
 local bulk_select_deselect = CreateConVar("pac_bulk_select_deselect", "1", FCVAR_ARCHIVE, "Whether selecting a part without holding bulk select key will deselect the bulk selected parts")
 local bulkselect_cursortext = CreateConVar("pac_bulk_select_cursor_info", "1", FCVAR_ARCHIVE, "Whether to draw some info next to your cursor when there is a bulk selection")
 
+CreateConVar("pac_bulk_select_sound_selected", "buttons/button1.wav", FCVAR_ARCHIVE)
+CreateConVar("pac_bulk_select_sound_deselected", "buttons/button16.wav", FCVAR_ARCHIVE)
+CreateConVar("pac_bulk_select_sound_prepared", "buttons/button4.wav", FCVAR_ARCHIVE)
+CreateConVar("pac_bulk_select_sound_executed", "buttons/button6.wav", FCVAR_ARCHIVE)
+
+
 CreateConVar("pac_copilot_partsearch_depth", -1, FCVAR_ARCHIVE, "amount of copiloting in the searchable part menu\n-1:none\n0:auto-focus on the text edit for events\n1:bring up a list of clickable event types\nother parts aren't supported yet")
 CreateConVar("pac_copilot_make_popup_when_selecting_event", 1, FCVAR_ARCHIVE, "whether to create a popup so you can read what an event does")
 CreateConVar("pac_copilot_open_asset_browser_when_creating_part", 0, FCVAR_ARCHIVE, "whether to open the asset browser for models, materials, or sounds")
@@ -222,6 +228,10 @@ local function ThinkBulkHighlight()
 	DrawHaloHighlight(last_bulk_select_tbl)
 end
 
+local ui_vol = CreateConVar("pac_ui_volume", "1", FCVAR_ARCHIVE, "volume of pac3 UI sound system",0,1)
+function pace.PlaySound(str)
+	EmitSound(str, pace.ViewPos, pac.LocalPlayer:EntIndex(), CHAN_AUTO, ui_vol:GetFloat())
+end
 
 function pace.WearParts(temp_wear_filter)
 
@@ -247,7 +257,6 @@ function pace.OnCreatePart(class_name, name, mdl, no_parent)
 				root:CreatePart(class_name)
 				return
 			end
-
 			local group
 			local parts = pac.GetLocalParts()
 			if table.Count(parts) == 1 then
@@ -285,6 +294,8 @@ function pace.OnCreatePart(class_name, name, mdl, no_parent)
 			end
 		end
 	end
+
+	if not part then return end
 
 	if name then part:SetName(name) end
 
@@ -502,6 +513,8 @@ function pace.FlashProperty(obj, key, edit)
 	if not obj.flashing_property then
 		obj.flashing_property = true
 		timer.Simple(0.1, function()
+			if not obj then return end
+			if not obj.pace_properties then return end
 			if not obj.pace_properties[key] then return end
 			obj.pace_properties[key]:Flash()
 			pace.current_flashed_property = key
@@ -1465,9 +1478,10 @@ do -- menu
 		RebuildBulkHighlight()
 		if not silent then
 			if selected_part_added then
-				surface.PlaySound("buttons/button1.wav")
-
-			else surface.PlaySound("buttons/button16.wav") end
+				pace.PlaySound(GetConVar("pac_bulk_select_sound_selected"):GetString())
+			else
+				pace.PlaySound(GetConVar("pac_bulk_select_sound_deselected"):GetString())
+			end
 		end
 
 		if table.IsEmpty(pace.BulkSelectList) then
@@ -1576,7 +1590,6 @@ do -- menu
 		local shared_udata_properties = {}
 
 		for _,prop in pairs(basepart:GetProperties()) do
-
 			local shared = true
 			for _,part2 in pairs(pace.BulkSelectList) do
 				if basepart ~= part2 and basepart.ClassName ~= part2.ClassName then
@@ -1587,7 +1600,7 @@ do -- menu
 			end
 			if shared and basepart["Get" .. prop["key"]] ~= nil then
 				shared_properties[#shared_properties + 1] = prop["key"]
-			elseif shared and prop.udata.editor_friendly and basepart["Get" .. prop["key"]] == nil then
+			elseif shared and basepart["Get" .. prop["key"]] == nil then
 				if not table.HasValue(shared_udata_properties, "event_udata_"..prop["key"]) then
 					shared_udata_properties[#shared_udata_properties + 1] = "event_udata_"..prop["key"]
 				end
@@ -1904,7 +1917,7 @@ do -- menu
 			pace.ordered_operation_readystate = true
 			pace.ClearBulkList()
 			pace.FlashNotification("Selected " .. #pace.temp_bulkselect_orderedlist .. " parts for Ordered Insert. Now select " .. #pace.temp_bulkselect_orderedlist .. " parts destinations.")
-			surface.PlaySound("buttons/button4.wav")
+			pace.PlaySound(GetConVar("pac_bulk_select_sound_prepared"):GetString())
 		else
 			if #pace.temp_bulkselect_orderedlist == #pace.BulkSelectList then
 				pace.RecordUndoHistory()
@@ -1913,7 +1926,7 @@ do -- menu
 				end
 				pace.RecordUndoHistory()
 				pace.RefreshTree()
-				surface.PlaySound("buttons/button6.wav")
+				pace.PlaySound(GetConVar("pac_bulk_select_sound_executed"):GetString())
 			end
 			pace.ordered_operation_readystate = false
 		end
@@ -2655,7 +2668,7 @@ function pace.AddQuickSetupsToPartMenu(menu, obj)
 	local main, pnlmain = menu:AddSubMenu("quick setups") pnlmain:SetIcon("icon16/basket_go.png")
 	--base_movables can restructure, but nah bones aint it
 	if obj.GetDrawPosition and obj.ClassName ~= "bone" and obj.ClassName ~= "bone2" and obj.ClassName ~= "bone3" then
-		if obj.Bone and obj.Bone == "camera" then
+		if obj.Bone and (obj.Bone == "camera" or obj.Bone == "player_eyes") then
 			main:AddOption("camera bone suggestion: limit view to yourself", function()
 				local event = pac.CreatePart("event") event:SetEvent("viewed_by_owner") event:SetParent(obj)
 			end):SetImage("icon16/star.png")
@@ -2708,7 +2721,9 @@ function pace.AddQuickSetupsToPartMenu(menu, obj)
 	end
 
 	local function install_submaterial_options(menu)
-		local mats = obj:GetOwner():GetMaterials()
+		local owner = obj:GetOwner()
+		if not IsValid(owner) then return end
+		local mats = owner:GetMaterials()
 		local mats_str = table.concat(mats,"\n")
 		local dyn_props = obj:GetDynamicProperties()
 		local submat_togglers, pnl = main:AddSubMenu("create submaterial zone togglers (hide/show materials)", function()
@@ -2751,7 +2766,7 @@ function pace.AddQuickSetupsToPartMenu(menu, obj)
 				else
 					obj:SetMaterials(table.concat(submaterials, ";"))
 				end
-
+				
 			end, submat_togglers):SetIcon("icon16/paintcan.png")
 		end
 
@@ -2947,7 +2962,7 @@ function pace.AddQuickSetupsToPartMenu(menu, obj)
 				local new_proxy = pac.CreatePart("proxy") new_proxy:SetParent(obj.Parent)
 				new_proxy:SetExpression("feedback() + 4*ftime()*((" .. obj.Expression .. ") - feedback())")
 				new_proxy:SetName(str)
-				new_proxy:SetExtra1(new_proxy.Expression)
+				new_proxy:SetExtra1("feedback()")
 			end)
 		end):SetIcon("icon16/calculator.png")
 	elseif obj.ClassName == "text" then
@@ -3050,20 +3065,23 @@ function pace.AddQuickSetupsToPartMenu(menu, obj)
 		end):SetIcon("icon16/shield.png")
 
 	elseif obj.ClassName == "entity2" then
-		if obj:GetOwner().GetBodyGroups then
-			local bodygroups = obj:GetOwner():GetBodyGroups()
-			if #bodygroups > 0 then
-				local submenu, pnl = main:AddSubMenu("toggleable bodygroup with a dual proxy") pnl:SetImage("icon16/table_refresh.png")
-				pnl:SetTooltip("It will apply 1 and 0. But if there are more variations in that bodygroup, change the expression and the expression on hide if you wish")
-				for i,bodygroup in ipairs(bodygroups) do
-					if bodygroup.num == 1 then continue end
-					local pnl = submenu:AddOption(bodygroup.name, function()
-						local proxy = pac.CreatePart("proxy") proxy:SetParent(obj)
-						proxy:SetExpression("1") proxy:SetExpressionOnHide("0")
-						proxy:SetVariableName(bodygroup.name)
-						local event = pac.CreatePart("event") event:SetParent(proxy) event:SetEvent("command") event:SetArguments(string.Replace(bodygroup.name, " "))
-					end)
-					pnl:SetTooltip(table.ToString(bodygroup.submodels, nil, true))
+		local owner = obj:GetOwner()
+		if IsValid(owner) then
+			if owner.GetBodyGroups then
+				local bodygroups = owner:GetBodyGroups()
+				if #bodygroups > 0 then
+					local submenu, pnl = main:AddSubMenu("toggleable bodygroup with a dual proxy") pnl:SetImage("icon16/table_refresh.png")
+					pnl:SetTooltip("It will apply 1 and 0. But if there are more variations in that bodygroup, change the expression and the expression on hide if you wish")
+					for i,bodygroup in ipairs(bodygroups) do
+						if bodygroup.num == 1 then continue end
+						local pnl = submenu:AddOption(bodygroup.name, function()
+							local proxy = pac.CreatePart("proxy") proxy:SetParent(obj)
+							proxy:SetExpression("1") proxy:SetExpressionOnHide("0")
+							proxy:SetVariableName(bodygroup.name)
+							local event = pac.CreatePart("event") event:SetParent(proxy) event:SetEvent("command") event:SetArguments(string.Replace(bodygroup.name, " "))
+						end)
+						pnl:SetTooltip(table.ToString(bodygroup.submodels, nil, true))
+					end
 				end
 			end
 		end
@@ -3098,20 +3116,23 @@ function pace.AddQuickSetupsToPartMenu(menu, obj)
 				end):SetImage("materials/spawnicons/"..string.gsub(wep_mdl, ".mdl", "")..".png")
 			end
 		end
-		if obj.Owner.GetBodyGroups then
-			local bodygroups = obj.Owner:GetBodyGroups()
-			if (#bodygroups > 1) or (#bodygroups[1].submodels > 1) then
-				local submenu, pnl = main:AddSubMenu("toggleable bodygroup with a dual proxy") pnl:SetImage("icon16/table_refresh.png")
-				pnl:SetTooltip("It will apply 1 and 0. But if there are more variations in that bodygroup, change the expression and the expression on hide if you wish")
-				for i,bodygroup in ipairs(bodygroups) do
-					if bodygroup.num == 1 then continue end
-					local pnl = submenu:AddOption(bodygroup.name, function()
-						local proxy = pac.CreatePart("proxy") proxy:SetParent(obj)
-						proxy:SetExpression("1") proxy:SetExpressionOnHide("0")
-						proxy:SetVariableName(bodygroup.name)
-						local event = pac.CreatePart("event") event:SetParent(proxy) event:SetEvent("command") event:SetArguments(string.Replace(bodygroup.name, " "))
-					end)
-					pnl:SetTooltip(table.ToString(bodygroup.submodels, nil, true))
+		local owner = obj:GetOwner()
+		if IsValid(owner) then
+			if owner.GetBodyGroups then
+				local bodygroups = owner:GetBodyGroups()
+				if (#bodygroups > 1) or (#bodygroups[1].submodels > 1) then
+					local submenu, pnl = main:AddSubMenu("toggleable bodygroup with a dual proxy") pnl:SetImage("icon16/table_refresh.png")
+					pnl:SetTooltip("It will apply 1 and 0. But if there are more variations in that bodygroup, change the expression and the expression on hide if you wish")
+					for i,bodygroup in ipairs(bodygroups) do
+						if bodygroup.num == 1 then continue end
+						local pnl = submenu:AddOption(bodygroup.name, function()
+							local proxy = pac.CreatePart("proxy") proxy:SetParent(obj)
+							proxy:SetExpression("1") proxy:SetExpressionOnHide("0")
+							proxy:SetVariableName(bodygroup.name)
+							local event = pac.CreatePart("event") event:SetParent(proxy) event:SetEvent("command") event:SetArguments(string.Replace(bodygroup.name, " "))
+						end)
+						pnl:SetTooltip(table.ToString(bodygroup.submodels, nil, true))
+					end
 				end
 			end
 		end
@@ -3141,7 +3162,6 @@ function pace.AddQuickSetupsToPartMenu(menu, obj)
 					end
 				end)
 			end):SetIcon("icon16/text_align_center.png")
-
 		main:AddOption("clone model inside itself", function()
 			local copiable_properties = {
 				"Model", "Size", "Scale", "Alpha", "Material", "Materials", "NoLighting", "NoCulling", "Invert", "Skin", "IgnoreZ", "Translucent", "Brightness", "BlendMode"
@@ -3964,6 +3984,87 @@ function pace.AddClassSpecificPartMenuComponents(menu, obj)
 			menu:AddOption("(FireOnce only) spew", function() obj:OnShow() end):SetIcon("icon16/star.png")
 		end
 	elseif obj.ClassName == "proxy" then
+
+		local menu2, pnl = menu:AddSubMenu("Show graph", function()
+			if obj == pace.performance_tracked_part then
+				pace.CloseProxyGrapher()
+			else
+				pace.OpenProxyGrapher(obj)
+			end
+		end) pnl:SetImage("icon16/chart_line.png")
+
+		menu:AddOption("Show performance stats", function()
+			pace.request_proxy_stats = "stats"
+			if pace.request_proxy_stats and obj == pace.performance_tracked_part then
+				pace.performance_tracked_part = false
+				pace.request_proxy_stats = nil
+				return
+			end
+			pace.performance_tracked_part = obj
+		end):SetImage("icon16/chart_bar.png")
+
+		menu2:AddOption("Small bounds (+): x:{0,10}, y:{0,2}", function()
+			pace.OpenProxyGrapher(obj)
+			timer.Simple(0, function()
+				pace.proxygraph_properties.panels["step"]:SetValue(0.02)
+				pace.proxygraph_properties.panels["min_x"]:SetValue(0)
+				pace.proxygraph_properties.panels["max_x"]:SetValue(10)
+				pace.proxygraph_properties.panels["min_y"]:SetValue(0)
+				pace.proxygraph_properties.panels["max_y"]:SetValue(2)
+			end)
+		end)
+		menu2:AddOption("Small bounds (+/-): x:{0,10}, y:{-2,2}", function()
+			pace.OpenProxyGrapher(obj)
+			timer.Simple(0, function()
+				pace.proxygraph_properties.panels["step"]:SetValue(0.02)
+				pace.proxygraph_properties.panels["min_x"]:SetValue(0)
+				pace.proxygraph_properties.panels["max_x"]:SetValue(10)
+				pace.proxygraph_properties.panels["min_y"]:SetValue(-2)
+				pace.proxygraph_properties.panels["max_y"]:SetValue(2)
+			end)
+		end)
+		menu2:AddOption("Mid bounds: x:{-100,100}, y:{-50,50}", function()
+			pace.OpenProxyGrapher(obj)
+			timer.Simple(0, function()
+				pace.proxygraph_properties.panels["step"]:SetValue(1)
+				pace.proxygraph_properties.panels["min_x"]:SetValue(-100)
+				pace.proxygraph_properties.panels["max_x"]:SetValue(100)
+				pace.proxygraph_properties.panels["min_y"]:SetValue(-50)
+				pace.proxygraph_properties.panels["max_y"]:SetValue(50)
+			end)
+		end)
+		menu2:AddOption("Large bounds: x:{-100,100}, y:{-1000,1000}", function()
+			pace.OpenProxyGrapher(obj)
+			timer.Simple(0, function()
+				pace.proxygraph_properties.panels["step"]:SetValue(1)
+				pace.proxygraph_properties.panels["min_x"]:SetValue(-100)
+				pace.proxygraph_properties.panels["max_x"]:SetValue(100)
+				pace.proxygraph_properties.panels["min_y"]:SetValue(-1000)
+				pace.proxygraph_properties.panels["max_y"]:SetValue(1000)
+			end)
+		end)
+		menu2:AddOption("Mega bounds: x:{-1000,1000}, y:{-10000,10000}", function()
+			pace.OpenProxyGrapher(obj)
+			timer.Simple(0, function()
+				pace.proxygraph_properties.panels["step"]:SetValue(100)
+				pace.proxygraph_properties.panels["min_x"]:SetValue(-1000)
+				pace.proxygraph_properties.panels["max_x"]:SetValue(1000)
+				pace.proxygraph_properties.panels["min_y"]:SetValue(-10000)
+				pace.proxygraph_properties.panels["max_y"]:SetValue(10000)
+			end)
+		end)
+		menu2:AddOption("Astronomical bounds: x:{-1000000,1000000}, y:{-1000000,1000000}", function()
+			pace.OpenProxyGrapher(obj)
+			timer.Simple(0, function()
+				pace.proxygraph_properties.panels["step"]:SetValue(50000)
+				pace.proxygraph_properties.panels["min_x"]:SetValue(-1000000)
+				pace.proxygraph_properties.panels["max_x"]:SetValue(1000000)
+				pace.proxygraph_properties.panels["min_y"]:SetValue(-1000000)
+				pace.proxygraph_properties.panels["max_y"]:SetValue(1000000)
+			end)
+		end)
+
+
 		if string.find(obj.Expression, "timeex") or string.find(obj.Expression, "ezfade") then
 			menu:AddOption("(timeex) reset clock", function() obj:OnHide() obj:OnShow() end):SetIcon("icon16/star.png")
 		end
@@ -4111,7 +4212,6 @@ function pace.AddClassSpecificPartMenuComponents(menu, obj)
 			end):SetIcon("icon16/clock_link.png")
 		end
 	end
-
 	pace.AddQuickSetupsToPartMenu(menu, obj)
 end
 
@@ -4921,6 +5021,7 @@ function pace.ProcessPartsByCriteria(raw_args)
 			local key = v[2]
 			local value = v[3]
 			if action == "DELETE" then part:Remove() return end
+			if action == "SELECT" then pace.DoBulkSelect(part) return end
 			if action == "REPLACE" then
 				if part["Set"..key] then
 					local type = type(part["Get"..key](part))

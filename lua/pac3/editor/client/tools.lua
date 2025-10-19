@@ -863,3 +863,39 @@ pace.AddTool(L"copy from faceposer tool", function(part, suboption)
 		end
 	end
 end)
+
+pace.AddTool(L"write editor tool...", function()
+	local allowcslua = GetConVar("sv_allowcslua")
+	if allowcslua:GetBool() then
+		pace.MultilineStringRequest("write lua code", "sample text",
+[[-- part refers to the selected part
+-- in this example, looks through all your parts and sets notes on model parts
+local root = part:GetRootPart()
+for uid,part2 in pairs(pac.GetLocalParts()) do
+	if part2.ClassName == "model2" then part2:SetNotes("hello world") end
+end
+pace.RefreshTree(true)]],
+			function(toolstr)
+				Derma_StringRequest("name your editor tool", "give it a name", "tool", function(toolfile)
+					file.Write("pac3_editor/tools/" .. toolfile .. ".txt",toolstr)
+					local ctoolstr = [[pace.AddTool("]] .. toolfile .. [[", function(part, suboption) ]] .. toolstr .. " end)"
+					RunStringEx(ctoolstr, "pac_editor_import_tool")
+					pac.LocalPlayer:ConCommand("pac_editor") --close and reopen editor
+				end)
+			end,
+			function() end, "confirm", "cancel")
+	else
+		Derma_Message("Importing pac editor tools is disallowed on this server.","Error: Clientside Lua Disabled","OK")
+	end
+end)
+
+if file.Exists("pac3_editor/tools", "DATA") then
+	pace.AddTool("-----Imported tools-----")
+	local files, folders = file.Find("pac3_editor/tools/*.txt", "DATA")
+	for i,toolfile in ipairs(files) do
+		print(i,toolfile)
+		local toolstr = file.Read("pac3_editor/tools/" .. toolfile,"DATA")
+		local ctoolstr = [[pace.AddTool("]] .. toolfile .. [[", function(part, suboption) ]] .. toolstr .. " end)"
+		RunStringEx(ctoolstr, "pac_editor_import_tool")
+	end
+end

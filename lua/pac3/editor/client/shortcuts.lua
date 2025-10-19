@@ -72,6 +72,7 @@ pace.PACActionShortcut_Dictionary = {
 	"bulk_morph",
 	"criteria_process",
 	"toggle_pins",
+	"cycle_gizmo"
 }
 
 pace.PACActionShortcut_Default = {
@@ -801,6 +802,10 @@ function pace.DoShortcutFunc(action)
 
 	if action == "toggle_pins" then
 		GetConVar("pac_editor_pins"):SetBool(not GetConVar("pac_editor_pins"):GetBool())
+	end
+
+	if action == "cycle_gizmo" then
+		pace.angle_gizmo_render = (pace.angle_gizmo_render+1) % 4
 	end
 end
 

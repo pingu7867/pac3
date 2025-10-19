@@ -32,6 +32,7 @@ include("about.lua")
 include("animation_timeline.lua")
 include("render_scores.lua")
 include("wires.lua")
+include("proxy_graphing.lua")
 
 include("wear_filter.lua")
 include("show_outfit_on_use.lua")

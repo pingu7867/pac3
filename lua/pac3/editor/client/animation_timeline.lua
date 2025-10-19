@@ -7,6 +7,7 @@ local timeline = pace.timeline
 
 local secondDistance = 200 --100px per second on timeline
 
+local editing_override = false
 do
 	local BUILDER, PART = pac.PartTemplate("base_movable")
 
@@ -151,6 +152,24 @@ function timeline.EditBone()
 	check_tpose()
 end
 
+function timeline.SetBone(str)
+	timeline.selected_bone = str
+	timeline.dummy_bone:SetBone(str)
+	pace.Call("VariableChanged", timeline.dummy_bone, "Bone", str)
+	timeline.EditBone()
+end
+function timeline.SetPosition(vec)
+	timeline.dummy_bone:SetPosition(vec)
+	pace.Call("VariableChanged", timeline.dummy_bone, "Position", vec)
+	timeline.EditBone()
+end
+function timeline.SetAngles(ang)
+	timeline.dummy_bone:SetAngles(ang)
+	pace.Call("VariableChanged", timeline.dummy_bone, "Angles", ang)
+	timeline.EditBone()
+end
+
+
 function timeline.Load(data)
 	timeline.data = data
 
@@ -285,7 +304,9 @@ function timeline.Open(part)
 					end
 				end
 
-				timer.Simple(0, function() timeline.EditBone() end) -- post variable changed?
+				if not editing_override then
+					timer.Simple(0, function() timeline.EditBone() end) -- post variable changed?
+				end
 			else
 				local data = timeline.selected_keyframe:GetData()
 				data.BoneInfo = data.BoneInfo or {}
@@ -343,6 +364,12 @@ pac.AddHook("pace_OnPartSelected", "pac3_timeline", function(part)
 		end
 		timeline.Open(part)
 		editing_part = part
+		if part.AnimationType == "posture" then
+			timer.Simple(0, function()
+				part:OnHide()
+				part:OnShow()
+			end)
+		end
 	elseif timeline.editing then
 		if editing_part then
 			local part2 = editing_part
@@ -507,6 +534,95 @@ do
 						end)
 					end
 
+					menu:PerformLayout()
+
+					local x, y = bottom:LocalToScreen(0, 0)
+					x = x + bottom:GetWide()
+					menu:SetPos(x - menu:GetWide(), y - menu:GetTall())
+				end
+
+				local saveload2 = bottom:Add("DPanel")
+				saveload2:SetWide(100)
+				saveload2:SetTall(bottom:GetTall())
+				saveload2:Dock(TOP) saveload2:SetY(16)
+				saveload2:SetTall(16)
+
+				local handflip = saveload2:Add("DImageButton")
+				handflip:SetImage("icon16/arrow_switch.png")
+				handflip:SizeToContents()
+				handflip:Dock(LEFT)
+				handflip:SetTooltip(L"flip hand")
+				handflip.DoClick = function()
+					local menu = DermaMenu()
+					menu:SetPos(handflip:LocalToScreen())
+					
+					menu:AddOption("left fingers -> right", function()
+						editing_override = true
+						for i=0,4 do
+							for j=0,2 do
+								local bone_name = "left finger " .. i .. (j==0 and "" or j)
+								local bone_name_alt = "right finger " .. i .. (j==0 and "" or j)
+								editing_override = true
+								timeline.SetBone(bone_name)
+								local pos = timeline.dummy_bone:GetPosition()
+								local ang = timeline.dummy_bone:GetAngles()
+								timeline.EditBone()
+
+								timeline.SetBone(bone_name_alt)
+								timeline.SetPosition(pos)
+								timeline.SetAngles(ang)
+								editing_override = false
+								timeline.EditBone()
+								timeline.Save()
+							end
+						end
+						editing_override = false
+					end)
+					menu:AddOption("right fingers -> left", function()
+						editing_override = true
+						for i=0,4 do
+							for j=0,2 do
+								local bone_name = "right finger " .. i .. (j==0 and "" or j)
+								local bone_name_alt = "left finger " .. i .. (j==0 and "" or j)
+								timeline.SetBone(bone_name)
+								local pos = timeline.dummy_bone:GetPosition()
+								local ang = timeline.dummy_bone:GetAngles()
+
+								timeline.SetBone(bone_name_alt)
+								timeline.SetPosition(pos)
+								timeline.SetAngles(ang)
+								timeline.Save()
+							end
+						end
+						editing_override = false
+					end)
+					menu:AddOption("clear right hand", function()
+						editing_override = true
+						for i=0,4 do
+							for j=0,2 do
+								local bone_name = "right finger " .. i .. (j==0 and "" or j)
+								timeline.SetBone(bone_name)
+								timeline.SetPosition(Vector(0,0,0))
+								timeline.SetAngles(Angle(0,0,0))
+								timeline.Save()
+							end
+						end
+						editing_override = false
+					end)
+					menu:AddOption("clear left hand", function()
+						editing_override = true
+						for i=0,4 do
+							for j=0,2 do
+								local bone_name = "left finger " .. i .. (j==0 and "" or j)
+								timeline.SetBone(bone_name)
+								timeline.SetPosition(Vector(0,0,0))
+								timeline.SetAngles(Angle(0,0,0))
+								timeline.Save()
+							end
+						end
+						editing_override = false
+					end)
+					
 					menu:PerformLayout()
 
 					local x, y = bottom:LocalToScreen(0, 0)
@@ -1046,6 +1162,23 @@ do
 			sub:AddOption(L"start", function() duplicateTo(1) end):SetImage("icon16/resultset_first.png")
 			sub:AddOption(L"end", function() duplicateTo(#timeline.data.FrameData + 1) end):SetImage("icon16/resultset_last.png")
 			opt:SetIcon("icon16/page_copy.png")
+			menu:AddOption(L"reset", function()
+				local frame = timeline.data.FrameData[self:GetAnimationIndex() - 1]
+				if not frame then
+					frame = timeline.data.FrameData[#timeline.data.FrameData]
+				end
+				local tbl = frame.BoneInfo
+				for i, v in pairs(tbl) do
+					self:GetData().BoneInfo[i] = table.Copy(self:GetData().BoneInfo[i] or {})
+					self:GetData().BoneInfo[i].MU = 0
+					self:GetData().BoneInfo[i].MR = 0
+					self:GetData().BoneInfo[i].MF = 0
+					self:GetData().BoneInfo[i].RU = 0
+					self:GetData().BoneInfo[i].RR = 0
+					self:GetData().BoneInfo[i].RF = 0
+				end
+				timeline.UpdateFrameData()
+			end):SetImage("icon16/page_delete.png")
 
 			menu:AddOption(L"remove", function()
 				local frameNum = self:GetAnimationIndex()

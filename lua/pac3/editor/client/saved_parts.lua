@@ -41,7 +41,7 @@ function pace.SaveParts(name, prompt_name, override_part, overrideAsUsual)
 		if pace.use_current_part_for_saveload and pace.current_part:IsValid() then
 			override_part = pace.current_part
 		end
-
+		
 		if override_part then
 			data = override_part:ToSaveTable()
 		end
@@ -99,6 +99,8 @@ local maxBackups = CreateConVar("pac_backup_limit", "100", {FCVAR_ARCHIVE}, "Max
 local autoload_prompt = CreateConVar("pac_prompt_for_autoload", "1", {FCVAR_ARCHIVE}, "Whether to ask before loading autoload. The prompt can let you choose to not load, pick autoload or the newest backup")
 local auto_spawn_prop = CreateConVar("pac_autoload_preferred_prop", "2", {FCVAR_ARCHIVE}, "When loading a pac with an owner name suggesting a prop, notify you and then wait before auto-applying the outfit next time you spawn a prop.\n" ..
 																								"0 : do not check\n1 : check if only 1 such group is present\n2 : check if multiple such groups are present and queue one group at a time")
+local lazy_mode = CreateConVar("pac_load_lazymode", 1, FCVAR_ARCHIVE, "Whether the editor load function should decode parts for outfits only as needed, that is revealing parts after one second hovering over an outfit file")
+local compact_mode = CreateConVar("pac_load_compactmode", 0, FCVAR_ARCHIVE, "Whether the editor load function should compact the derma menu by moving each new submenu leftward by 75 pixels, at the cost of text readability\nYou could use that if you have deep folders or tree structures.")
 
 
 function pace.Backup(data, name)
@@ -121,7 +123,8 @@ function pace.Backup(data, name)
 			local temp = {}
 			for key, name in pairs(files) do
 				local time = file.Time("pac3/__backup/" .. name, "DATA")
-				table.insert(temp, {path = "pac3/__backup/" .. name, time = time})
+				local size = file.Size("pac3/__backup/" .. name, "DATA")
+				table.insert(temp, {path = "pac3/__backup/" .. name, time = time, size = size})
 			end
 
 			table.sort(temp, function(a, b)
@@ -129,7 +132,14 @@ function pace.Backup(data, name)
 			end)
 
 			for i = maxBackups:GetInt() + 1, #files do
-				file.Delete(temp[i].path, "DATA")
+				if temp[i+1] then
+				--guard against deleting major differences (assume that we follow the same lineage if it's within kilobytes)
+					if math.abs(temp[i].size - temp[i+1].size) > 50000 then
+						print("[save backup guard] delta is considerable")
+					end
+				else
+					file.Delete(temp[i].path, "DATA")
+				end
 			end
 		end
 
@@ -164,6 +174,7 @@ end
 
 
 function pace.LoadParts(name, clear, override_part)
+	pace.ExtendWearTracker(5)
 
 	if not name then
 		local frm = vgui.Create("DFrame")
@@ -303,6 +314,7 @@ concommand.Add("pac_load_url", function(ply, cmd, args)
 end)
 
 function pace.LoadPartsFromTable(data, clear, override_part)
+	pace.ExtendWearTracker(5)
 	if pace.use_current_part_for_saveload and pace.current_part:IsValid() then
 		override_part = pace.current_part
 	end
@@ -349,16 +361,22 @@ function pace.LoadPartsFromTable(data, clear, override_part)
 	pac.LocalPlayer.pac_fix_show_from_render = SysTime() + 1
 
 	pace.RecordUndoHistory()
+
+	if IsValid(pace.mirroring_display_panel) then
+		pace.mirroring_display_already_active = true
+		pac.MirrorMyPac()
+		pac.ApplyPACMirror()
+	end
 end
 
-local function add_files(tbl, dir)
+local function add_files(tbl, dir, cheap)
 	local files, folders = file.Find("pac3/" .. dir .. "/*", "DATA")
 
 	if folders then
 		for key, folder in pairs(folders) do
 			if folder == "__backup" or folder == "objcache" or folder == "__animations" or folder == "__backup_save" then continue end
 			tbl[folder] = {}
-			add_files(tbl[folder], dir .. "/" .. folder)
+			add_files(tbl[folder], dir .. "/" .. folder, cheap)
 		end
 	end
 
@@ -378,22 +396,24 @@ local function add_files(tbl, dir)
 						data.Path = path
 						data.RelativePath = (dir .. "/" .. data.Name):sub(2)
 
-					local dat, err = pace.luadata.ReadFile(path)
-						data.Content = dat
-
-					if dat then
-						table.insert(tbl, data)
+					if not cheap then
+						local dat,err=pace.luadata.ReadFile(path)
+							data.Content = dat
+						if dat then
+							table.insert(tbl, data)
+						else
+							pac.dprint(("Decoding %s failed: %s\n"):format(path,err))
+							chat.AddText(("Could not load: %s\n"):format(path))
+						end
 					else
-						pac.dprint(("Decoding %s failed: %s\n"):format(path, err))
-						chat.AddText(("Could not load: %s\n"):format(path))
+						table.insert(tbl, data)
 					end
-
 				end
 			end
 		end
 	end
 
-	table.sort(tbl, function(a, b)
+	table.sort(tbl, function(a,b)
 		if a.Time and b.Time then
 			return a.Name < b.Name
 		end
@@ -409,11 +429,35 @@ function pace.GetSavedParts(dir)
 
 	local out = {}
 
-	add_files(out, dir or "")
+	add_files(out, dir or "", false)
 
 	pace.CachedFiles = out
 
 	return out
+end
+
+local function install_hovers(self, parentsubmenu, delay, hovered_complete_func)
+	function self:Think()
+		if self:IsHovered() or self.completed_hover then
+			if not self.hovering_start then
+				if not self.completed_hover then
+					self.hovering_start = CurTime()
+				end
+			end
+			self.hovering_start = self.hovering_start or CurTime()
+			if (CurTime() > self.hovering_start + delay) or input.IsShiftDown() then
+				if not self.completed_hover then
+					if hovered_complete_func then hovered_complete_func() end
+					if not parentsubmenu.was_compacted and compact_mode:GetBool() then
+						parentsubmenu:MoveBy(-math.max(parentsubmenu:GetParent():GetWide(), 75) + 75,0,1,0.3)
+					end
+					self.compacted = true
+					self.completed_hover = true
+					self.hovering_start = nil
+				end
+			end
+		else self.hovering_start = nil self.was_compacted = self.compacted end
+	end
 end
 
 local function populate_part(menu, part, override_part, clear)
@@ -428,9 +472,12 @@ local function populate_part(menu, part, override_part, clear)
 			pace.LoadPartsFromTable(part, nil, override_part)
 		end)
 		pnl:SetImage(part.self.Icon)
-		menu.GetDeleteSelf = function() return false end
+		menu:SetDeleteSelf(false)
 		local old = menu.Open
 		menu.Open = function(...)
+			if compact_mode:GetBool() then
+				install_hovers(pnl, menu, 0.2)
+			end
 			if not menu.pac_opened then
 				for key, part in pairs(part.children) do
 					populate_part(menu, part, override_part, clear)
@@ -440,6 +487,7 @@ local function populate_part(menu, part, override_part, clear)
 
 			return old(...)
 		end
+		local old2 = menu.Close menu.Close = function(...) menu.was_compacted = menu.compacted return old2(...) end
 	else
 		menu:AddOption(name, function()
 			pace.LoadPartsFromTable(part, clear, override_part)
@@ -448,6 +496,90 @@ local function populate_part(menu, part, override_part, clear)
 end
 
 local function populate_parts(menu, tbl, override_part, clear)
+	for key, data in pairs(tbl) do
+		if not data.Path then
+			local menu, pnl = menu:AddSubMenu(key, function() end, data)
+			pnl:SetImage(pace.MiscIcons.load)
+			menu:SetDeleteSelf(false)
+			local old = menu.Open
+			menu.Open = function(...)
+				if compact_mode:GetBool() then
+
+						menu:MoveBy(-math.max(menu:GetParent():GetWide(), 75) + 75,0,1,0.3)
+
+					menu.was_compacted = true
+				end
+				if not menu.pac_opened then
+					populate_parts(menu, data, override_part, clear)
+					menu.pac_opened = true
+				end
+				return old(...)
+			end
+			local old2 = menu.Close menu.Close = function(...) menu.was_compacted = menu.compacted return old2(...) end
+		else
+			local icon = pace.MiscIcons.outfit
+			local parts = data.Content
+
+			if parts.self then
+				icon = parts.self.Icon
+				parts = {parts}
+			end
+
+			local outfit, pnl = menu:AddSubMenu(data.Name, function()
+				pace.LoadParts(data.RelativePath .. ".txt", clear, override_part)
+			end)
+			pnl:SetImage(icon)
+			outfit:SetDeleteSelf(false)
+
+			local old = outfit.Open
+			outfit.Open = function(...)
+				if not outfit.pac_opened then
+					for key, part in pairs(parts) do
+						populate_part(outfit, part, override_part, clear)
+					end
+					outfit.pac_opened = true
+				end
+
+				return old(...)
+			end
+		end
+	end
+end
+
+--override_part is the relative path
+local function populate_outfits(menu, tbl, dir, override_part, clear, for_save_menu)
+	if for_save_menu then
+		menu:AddOption(L"new file", function() pace.SaveParts(nil, string.sub(dir,6) .. "/") end)
+		:SetImage("icon16/page_add.png")
+
+		menu:AddOption(L"new directory", function()
+			Derma_StringRequest(
+				L"new directory",
+				L"name:",
+				"",
+
+				function(name)
+					file.CreateDir(dir .. "/" .. name)
+					pace.RefreshFiles()
+				end
+			)
+		end)
+		:SetImage("icon16/folder_add.png")
+
+		menu:AddOption(L"to clipboard", function()
+			local data = {}
+			for key, part in pairs(pac.GetLocalParts()) do
+				if not part:HasParent() and part:GetShowInEditor() then
+					table.insert(data, part:ToSaveTable())
+				end
+			end
+			SetClipboardText(pace.luadata.Encode(data):sub(1, -1))
+		end)
+		:SetImage(pace.MiscIcons.copy)
+
+		menu:AddSpacer()
+	end
+	
 	local files = {}
 	local folders = {}
 	local sorted_tbl = {}
@@ -468,43 +600,61 @@ local function populate_parts(menu, tbl, override_part, clear)
 		local data = tab[2]
 		if not data.Path then
 			local menu, pnl = menu:AddSubMenu(key, function() end, data)
+			--that's a folder submenu
 			pnl:SetImage(pace.MiscIcons.load)
-			menu.GetDeleteSelf = function() return false end
+			menu:SetDeleteSelf(false)
 			local old = menu.Open
 			menu.Open = function(...)
+				if compact_mode:GetBool() then
+					install_hovers(pnl, menu, 0.2)
+				end
 				if not menu.pac_opened then
-					populate_parts(menu, data, override_part, clear)
+					populate_outfits(menu, data, dir .. "/" .. key, override_part, clear, for_save_menu) --that's a sub element, usually pac files but it's recursive it can be a folder
 					menu.pac_opened = true
 				end
 
 				return old(...)
 			end
 		else
-			local icon = pace.MiscIcons.outfit
-			local parts = data.Content
-
-			if parts.self then
-				icon = parts.self.Icon
-				parts = {parts}
-			end
-
-			local outfit, pnl = menu:AddSubMenu(data.Name, function()
-				pace.LoadParts(data.RelativePath, clear, override_part)
-			end)
-			pnl:SetImage(icon)
-			outfit.GetDeleteSelf = function() return false end
-
-			local old = outfit.Open
-			outfit.Open = function(...)
-				if not outfit.pac_opened then
-					for key, part in pairs(parts) do
-						populate_part(outfit, part, override_part, clear)
+			if not for_save_menu then
+				local icon = pace.MiscIcons.outfit
+				local outfit, pnl = menu:AddSubMenu(data.Name, function()
+					pace.LoadParts(data.RelativePath .. ".txt", clear, override_part)
+				end)
+				pnl:SetImage(icon)
+				outfit:SetDeleteSelf(false)
+				install_hovers(pnl, outfit, 0.5, function()
+					if not outfit.built_parts then
+						local dat,err=pace.luadata.ReadFile(data.Path)
+						if dat then
+							data.Content = dat
+							local parts = data.Content
+							for key, part in pairs(parts) do
+								if part.self then
+									populate_part(outfit, part, override_part, clear)
+									outfit.built_parts = true
+								end
+							end
+						else
+							pac.dprint(("Decoding %s failed: %s\n"):format(path,err))
+							chat.AddText(("Could not load: %s\n"):format(path))
+						end
 					end
-					outfit.pac_opened = true
-				end
-
-				return old(...)
+				end, compact_mode:GetBool())
+			else
+				local icon = pace.MiscIcons.outfit
+				local outfit, pnl = menu:AddSubMenu(data.Name, function()
+					pace.SaveParts(nil, data.RelativePath, override_part)
+				end)
+				pnl:SetImage(icon)
+				outfit:SetDeleteSelf(false)
+				outfit:AddOption(L"delete", function()
+					Derma_Query("Are you sure you want to delete outfit " .. data.RelativePath .. "? This cannot be undone!", "Deletion",
+					"delete", function() file.Delete("pac3/" .. data.RelativePath .. ".txt", "DATA") pace.RefreshFiles() end,
+					"cancel")
+				end):SetImage(pace.MiscIcons.clear)
 			end
+			
 		end
 	end
 end
@@ -658,6 +808,15 @@ function pace.AddSavedPartsToMenu(menu, clear, override_part)
 	end, subdir)
 end
 
+concommand.Add("pac_open_load_menu", function()
+	local menu = DermaMenu()
+	menu:SetPos(ScrW()/3,100)
+	gui.EnableScreenClicker(true)
+	pace.AddSavedPartsToMenu(menu, true)
+	menu:SetDeleteSelf(true)
+	menu.OnRemove = function() gui.EnableScreenClicker(false) end
+end)
+
 local function populate_parts(menu, tbl, dir, override_part)
 	dir = dir or ""
 	menu:AddOption(L"new file", function() pace.SaveParts(nil, dir .. "/", override_part) end)
@@ -772,7 +931,7 @@ local function populate_parts(menu, tbl, dir, override_part)
 end
 
 function pace.AddSaveMenuToMenu(menu, override_part)
-	menu.GetDeleteSelf = function() return false end
+	menu:SetDeleteSelf(false)
 
 	if not override_part then
 		menu:AddOption(L"auto load (your spawn outfit)", function()
@@ -783,8 +942,8 @@ function pace.AddSaveMenuToMenu(menu, override_part)
 		menu:AddSpacer()
 	end
 
-	local tbl = pace.GetSavedParts()
-	populate_parts(menu, tbl, nil, override_part)
+	local tbl = pace.GetSavedOutfits()
+	populate_outfits(menu, tbl, "pac3", override_part, true, true)
 end
 
 -- this fixes parts that are using the same uniqueid as other parts because of some bugs in older versions
@@ -845,7 +1004,7 @@ function pace.FixBadGrouping(data)
 			},
 		}
 
-		for k, v in pairs(other) do
+		for k,v in pairs(other) do
 			table.insert(out, v)
 		end
 

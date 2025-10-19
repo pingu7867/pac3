@@ -9,6 +9,25 @@ local function add_expensive_submenu_load(pnl, callback)
 	end
 end
 
+local function insert_problem(menu, str, tbl)
+	local part
+	if tbl and tbl.part then
+		part = tbl.part
+		str = tbl.part:GetName()
+	end
+
+	local menu3, pnl2 = pace.menu_bar_pac_problems:AddSubMenu(str, function()
+		if IsValid(part) then pace.GoToPart(part) end
+	end)
+
+	if not part then part = {} end
+	menu3.GetDeleteSelf = function() return false end
+	pnl2:SetImage(part.Icon or tbl.Icon or "icon16/world.png")
+	menu3:AddOption(tbl.description or "<no information included>"):SetIcon("icon16/bell.png")
+	menu3:AddOption(tbl.solution and ("proposed solution : " .. tbl.solution) or "<no solution offered>"):SetIcon("icon16/basket_go.png")
+	menu3:AddOption("go to...", function() pace.GoToPart(part) end):SetIcon("icon16/arrow_turn_right.png")
+end
+
 local function populate_pac(menu)
 	do
 		local menu, icon = menu:AddSubMenu(L"save", function() pace.SaveParts() end)
@@ -157,7 +176,7 @@ local function populate_pac(menu)
 						popup_pref_mode:AddOption(L"cursor", function() RunConsoleCommand("pac_popups_preferred_location", "cursor") end):SetImage('icon16/mouse.png')
 						popup_pref_mode:AddOption(L"tracking cursor", function() RunConsoleCommand("pac_popups_preferred_location", "tracking cursor") end):SetImage('icon16/mouse_add.png')
 						popup_pref_mode:AddOption(L"screen", function() RunConsoleCommand("pac_popups_preferred_location", "screen") end):SetImage('icon16/monitor.png')
-					
+
 
 			pnl = experimentals:AddOption("Bulk Select : " .. GetConVar("pac_bulk_select_key"):GetString() .. " + click to select; operations are in the part menu") pnl:SetIcon("icon16/table_multiple.png") pnl:SetTooltip("Bulk Select selects multiple parts to do operations quickly.\nIt has an order. The order of selection can matter for some operations like Bulk Morph Property.")
 			pnl = experimentals:AddOption("Morph properties on bulk select", pace.BulkMorphProperty) pnl:SetIcon("icon16/chart_line.png") pnl:SetTooltip("Once you have selected parts with Bulk Select, set variables gradually.\nIt can achieve color fades across multiple parts.\nThe order of selection matters.")
@@ -175,8 +194,59 @@ local function populate_pac(menu)
 	do
 		menu:AddOption(L"exit", function() pace.CloseEditor() end):SetImage(pace.MiscIcons.exit)
 	end
+	pace.menu_bar_pac = menu
+	if pace.problems_reported then
+		local menu2, pnl = pace.menu_bar_pac:AddSubMenu("problems")
+		pace.menu_bar_pac_problems = menu2
+		menu2.GetDeleteSelf = function() return false end
+		pnl:SetImage("icon16/error.png")
+		menu2:AddOption("Clear / refresh problems", function()
+			pace.CloseEditor()
+			pace.OpenEditor()
+			pace.WearOnServer()
+		end)
+		for str, tbl in pairs(pace.problems_reported) do
+			insert_problem(menu2, str, tbl)
+		end
+	end
+end
 
+pace.problems_reported = {}
+function pace.RemoveProblem(str) pace.problems_reported[str] = nil end
+function pace.ReportProblem(str, tbl, part)
+	--[[
+		str
+		tbl.part
+		tbl.Icon
+		tbl.description
+		tbl.solution
+	]]
 
+	if pace.problems_reported[str] then
+		if not tbl then
+			pace.problems_reported[str] = nil
+		end
+		return
+	else
+		if part then
+			if not tbl then pace.problems_reported[str] = nil return end
+			if table.IsEmpty(tbl) then pace.problems_reported[str] = nil return end
+		end
+		pace.problems_reported[str] = {part = part}
+		if tbl then for k,v in pairs(tbl) do pace.problems_reported[str][k] = v end end
+	end
+
+	if tbl == nil then return end
+
+	if not IsValid(pace.menu_bar_pac) then return end
+	if not IsValid(pace.menu_bar_pac_problems) then
+		local menu2, pnl = pace.menu_bar_pac:AddSubMenu("problems")
+		pace.menu_bar_pac_problems = menu2
+		menu2.GetDeleteSelf = function() return false end
+		pnl:SetImage("icon16/error.png")
+	end
+
+	insert_problem(menu2, str, tbl)
 end
 
 local function populate_view(menu)
@@ -188,13 +258,28 @@ local function populate_view(menu)
 	menu:AddCVar(L"enable editor camera: "..GetConVar("pac_enable_editor_view"):GetInt(), "pac_enable_editor_view", "1", "0"):SetImage("icon16/camera.png")
 	menu:AddOption(L"reset view position", function() pace.ResetView() end):SetImage("icon16/camera_link.png")
 	menu:AddOption(L"reset zoom", function() pace.ResetZoom() end):SetImage("icon16/magnifier.png")
+	menu:AddOption(L"visualize render times", pac.VisualiseRenderTimes):SetImage("icon16/chart_bar.png")
 end
 
 local function populate_options(menu)
 	menu:AddOption(L"settings", function() pace.OpenSettings() end)
 
 	menu:AddCVar(L"Keyboard shortcuts: Legacy mode", "pac_editor_shortcuts_legacy_mode", "1", "0")
-	menu:AddCVar(L"inverse collapse/expand controls", "pac_reverse_collapse", "1", "0")
+	local tree, pnl = menu:AddSubMenu(L"tree config", function() end)
+		tree.GetDeleteSelf = function() return false end
+		pnl:SetImage("icon16/sitemap_color.png")
+		tree:AddOption("editor scale", function()
+			Derma_StringRequest("pac_editor_scale", "set the editor line height multiplier", math.Round(GetConVar("pac_editor_scale"):GetFloat(),3),
+				function(val)
+					if isnumber(tonumber(val)) then
+						GetConVar("pac_editor_scale"):SetString(val)
+					end
+				end)
+		end):SetImage("icon16/text_linespacing.png")
+		tree:AddCVar(L"inverse collapse/expand controls", "pac_reverse_collapse", "1", "0")
+		tree:AddCVar(L"auto de-load collapsed nodes", "pac_tree_lazymode", "1", "0")
+		tree:AddCVar(L"print tree refresh times", "pac_tree_log_refreshes", "1", "0")
+
 	menu:AddCVar(L"enable shift+move/rotate clone", "pac_grab_clone", "1", "0")
 
 	menu:AddCVar(L"remember editor position", "pac_editor_remember_position", "1", "0")
@@ -301,6 +386,7 @@ local function populate_options(menu)
 			popup_pref_mode:AddOption(L"part label on tree", function() RunConsoleCommand("pac_popups_preferred_location", "pac tree label") end):SetImage('icon16/layout_content.png')
 			popup_pref_mode:AddOption(L"menu bar", function() RunConsoleCommand("pac_popups_preferred_location", "menu bar") end):SetImage('icon16/layout_header.png')
 			popup_pref_mode:AddOption(L"cursor", function() RunConsoleCommand("pac_popups_preferred_location", "cursor") end):SetImage('icon16/mouse.png')
+			popup_pref_mode:AddOption(L"tracking cursor", function() RunConsoleCommand("pac_popups_preferred_location", "tracking cursor") end):SetImage('icon16/mouse_add.png')
 			popup_pref_mode:AddOption(L"screen", function() RunConsoleCommand("pac_popups_preferred_location", "screen") end):SetImage('icon16/monitor.png')
 
 	menu:AddOption(L"configure event wheel", pace.ConfigureEventWheelMenu):SetImage("icon16/color_wheel.png")

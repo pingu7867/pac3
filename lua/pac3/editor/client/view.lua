@@ -202,29 +202,31 @@ end
 function pace.ResetZoom()
 	pace.zoom_reset = 75
 end
- 
+
 local worldPanel = vgui.GetWorldPanel();
-function worldPanel.OnMouseWheeled( self, scrollDelta )
-	if IsValid(pace.Editor) then
-		local zoom_usewheel = GetConVar( "pac_zoom_mousewheel" )
+timer.Simple(15, function()
+	function worldPanel.OnMouseWheeled( self, scrollDelta )
+		if IsValid(pace.Editor) then
+			local zoom_usewheel = GetConVar( "pac_zoom_mousewheel" )
 
-		if zoom_usewheel:GetInt() == 1 then
-			local speed = 10
+			if zoom_usewheel:GetInt() == 1 then
+				local speed = 10
 
-			if input.IsKeyDown(KEY_LSHIFT) then
-				speed = 50
-			end
+				if input.IsKeyDown(KEY_LSHIFT) then
+					speed = 50
+				end
 
-			if input.IsKeyDown(KEY_LCONTROL) then
-				speed = 1
-			end
+				if input.IsKeyDown(KEY_LCONTROL) then
+					speed = 1
+				end
 
-			if vgui.GetHoveredPanel() == worldPanel then
-				pace.Editor.zoomslider:SetValue(pace.ViewFOV - (scrollDelta * speed))
+				if vgui.GetHoveredPanel() == worldPanel then
+					pace.Editor.zoomslider:SetValue(pace.ViewFOV - (scrollDelta * speed))
+				end
 			end
 		end
 	end
-end
+end)
 
 local held_ang = Angle(0,0,0)
 local held_mpos = Vector(0,0,0)
@@ -670,20 +672,30 @@ function pace.CalcView(ply, pos, ang, fov)
 
 
 	--[[
-	local entpos = pace.GetViewEntity():WorldSpaceCenter()
-	local diff = pace.ViewPos - entpos
-	local MAX_CAMERA_DISTANCE = 300
-	local backtrace = util.QuickTrace(entpos, diff*50000, ply)
-	local final_dist = math.min(diff:Length(), MAX_CAMERA_DISTANCE, (backtrace.HitPos - entpos):Length() - 10)
-	pace.ViewPos = entpos + diff:GetNormalized() * final_dist
+		local entpos = pace.GetViewEntity():WorldSpaceCenter()
+		local diff = pace.ViewPos - entpos
+		local MAX_CAMERA_DISTANCE = 300
+		local backtrace = util.QuickTrace(entpos, diff*50000, ply)
+		local final_dist = math.min(diff:Length(), MAX_CAMERA_DISTANCE, (backtrace.HitPos - entpos):Length() - 10)
+		pace.ViewPos = entpos + diff:GetNormalized() * final_dist
 	]]
 
 	if not pace.camera_orthographic then
+		if pac.shaking then
+			pac.shake_offset = pac.shake_offset or Vector()
+			return
+			{
+				origin = pace.ViewPos + pac.shake_offset,
+				angles = viewang_final,
+				fov = pace.ViewFOV
+			}
+		end
 		return
 		{
 			origin = pace.ViewPos,
 			angles = viewang_final,
-			fov = pace.ViewFOV
+			fov = pace.ViewFOV,
+			znear = pace.znear
 		}
 	else
 		local orthoborder = pace.Editor.zoomslider:GetValue() / 1000
@@ -704,6 +716,41 @@ function pace.CalcView(ply, pos, ang, fov)
 	end
 	
 end
+
+local shake_vec = Vector()
+local amplitude = 0
+local frequency = 1
+local offsets = {0,0,0}
+local duration = 1
+local shake_tickrate = 1
+local shake_progress = 0
+--the real shake gets faster at the end
+
+pac.AddHook("Think", "editor_shakes", function()
+	if not pac.shaking then return end
+	shake_progress = shake_progress + shake_tickrate*FrameTime()*40
+	pac.shake_offset = amplitude * shake_vec * math.sin(shake_progress)
+end)
+
+function pac.ScreenShake(position, _amplitude, _frequency, duration)
+	--frequency = 30*_frequency
+	pac.shaking = true
+	offsets = {2*math.pi*math.random(),2*math.pi*math.random(),2*math.pi*math.random()}
+	pace.FlashNotification("shake is for approximate preview purposes only")
+	timer.Simple(duration, function()
+		pac.shaking = false
+	end)
+	shake_progress = 0
+	shake_tickrate = 1
+	for i=0,30,1 do --step function to roughly fade out
+		timer.Simple(i * duration / 30, function()
+			shake_vec = VectorRand()
+			amplitude = (1 - i/30) * _amplitude * 0.5
+			shake_tickrate = shake_tickrate + 0.1
+		end)
+	end
+end
+
 
 function pace.ShouldDrawLocalPlayer()
 	if not pace.editing_viewmodel and not pace.editing_hands then

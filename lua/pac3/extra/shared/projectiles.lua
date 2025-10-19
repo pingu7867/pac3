@@ -128,6 +128,7 @@ do -- projectile entity
 				end
 			else
 				phys:EnableCollisions(false)
+				self:SetCollisionGroup(COLLISION_GROUP_WORLD)
 			end
 
 

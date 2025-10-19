@@ -23,6 +23,8 @@ local damagezone_max_length = CreateConVar("pac_sv_damage_zone_max_length", "200
 local damagezone_max_radius = CreateConVar("pac_sv_damage_zone_max_radius", "10000", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "damage zone maximum radius")
 local damagezone_allow_dissolve = CreateConVar("pac_sv_damage_zone_allow_dissolve", "1", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether to enable entity dissolvers and removing NPCs\" weapons on death for damagezone")
 local damagezone_allow_damageovertime = CreateConVar("pac_sv_damage_zone_allow_damage_over_time", "1", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Allow damage over time for damagezone")
+local damagezone_max_damageovertime_time = CreateConVar("pac_sv_damage_zone_max_damage_over_time_delay", "1", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Maximum tick time allowed for damage over time for damagezone")
+local damagezone_min_damageovertime_time = CreateConVar("pac_sv_damage_zone_min_damage_over_time_delay", "0", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Minimum tick time allowed for damage over time for damagezone")
 local damagezone_max_damageovertime_total_time = CreateConVar("pac_sv_damage_zone_max_damage_over_time_total_time", "1", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "maximum time that a DoT instance is allowed to last in total.\nIf your tick time multiplied by the count is beyond that, it will compress the ticks, but if your total time is more than 200% of the limit, it will reject the attack")
 local damagezone_allow_ragdoll_networking_for_hitpart = CreateConVar("pac_sv_damage_zone_allow_ragdoll_hitparts", "0", CLIENT and {FCVAR_REPLICATED} or {FCVAR_NOTIFY, FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether to send information about corpses to all clients when a player's damage zone needs it for attaching hitparts")
 
@@ -426,6 +428,7 @@ if SERVER then
 		if ulx and (ent.frozen or ent.jail) then return end
 		--the grab imposes MOVETYPE_NONE and no collisions
 		--reverting the state requires to reset the eyeang roll in case it was modified
+		local phys = ent:GetPhysicsObject()
 		if ent:IsPlayer() then
 			if bool then --apply lock
 				active_grabbed_ents[ent] = true
@@ -473,6 +476,11 @@ if SERVER then
 				ent_ang.r = 0
 				ent:SetAngles(ent_ang)
 			end
+		else
+			if IsValid(phys) then
+				phys:EnableGravity(false)
+			end
+			if bool then return end
 		end
 
 		if bool == nil then
@@ -488,7 +496,9 @@ if SERVER then
 
 		ent:PhysWake()
 		ent:SetGravity(1)
-
+		if IsValid(phys) then
+			phys:EnableGravity(true)
+		end
 	end
 
 	local function maximized_ray_mins_maxs(startpos,endpos,padding)
@@ -881,6 +891,23 @@ if SERVER then
 			tbl1[v:EntIndex()] = v
 		end
 	end
+	
+	local requesting_corpses = {}
+	local function send_ragdoll(ent, rag)
+		if not ent.pac_damagezone_need_send_ragdoll then return end
+		if not ent.pac_damagezone_killer then return end
+		if not damagezone_allow:GetBool() then return end
+		if not damagezone_allow_ragdoll_networking_for_hitpart:GetBool() then return end
+		if ent:IsPlayer() then
+			if GetConVar("pac_sv_prop_outfits"):GetInt() ~= 2 then return end
+		end
+		if not PlayerIsCombatAllowed(ent.pac_damagezone_killer) then return end
+		if not requesting_corpses[ent.pac_damagezone_killer] then return end
+		net.Start("pac_send_ragdoll")
+		net.WriteUInt(ent:EntIndex(), 12)
+		net.WriteUInt(rag:EntIndex(), 12)
+		net.Broadcast()
+	end
 
 	local function ProcessDamagesList(ents_hits, dmg_info, tbl, pos, ang, ply)
 		local base_damage = tbl.Damage
@@ -1061,15 +1088,18 @@ if SERVER then
 			--add the max hp-scaled damage calculated with this entity's max health
 			tbl.Damage = base_damage + tbl.MaxHpScaling * ent:GetMaxHealth()
 			dmg_info:SetDamage(tbl.Damage)
-			--we'll need to find out whether the damage will crack open a player's extra bars
-			local de_facto_dmg = GetPredictedHPBarDamage(ent, tbl.Damage)
 
 			local distance = (ent:GetPos()):Distance(pos)
 
 			local fraction = math.pow(math.Clamp(1 - distance / math.Clamp(math.max(tbl.Radius, tbl.Length),1,50000),0,1),tbl.DamageFalloffPower)
 
+			local de_facto_dmg = 0
 			if tbl.DamageFalloff then
 				dmg_info:SetDamage(fraction * tbl.Damage)
+				--we'll need to find out whether the damage will crack open a player's extra bars
+				de_facto_dmg = GetPredictedHPBarDamage(ent, fraction * tbl.Damage)
+			else
+				de_facto_dmg = GetPredictedHPBarDamage(ent, tbl.Damage)
 			end
 
 			table.insert(successful_hit_ents,ent)
@@ -1148,6 +1178,9 @@ if SERVER then
 					table.insert(successful_kill_ents,ent)
 					ent.pac_damagezone_need_send_ragdoll = true
 					ent.pac_damagezone_killer = ply
+					if ent:IsPlayer() then
+						timer.Simple(0, function() send_ragdoll(ent, ent:GetRagdollEntity()) end)
+					end
 				end
 
 				--remove weapons on kill if asked
@@ -1850,21 +1883,11 @@ if SERVER then
 	end
 	
 	local active_DoT = {}
-	local requesting_corpses = {}
 
 	local function DeclareDamageZoneReceivers()
 		--networking for damagezone hitparts on corpses
 		hook.Add("CreateEntityRagdoll", "pac_ragdoll_assign", function(ent, rag)
-			if not ent.pac_damagezone_need_send_ragdoll then return end
-			if not ent.pac_damagezone_killer then return end
-			if not damagezone_allow:GetBool() then return end
-			if not damagezone_allow_ragdoll_networking_for_hitpart:GetBool() then return end
-			if not PlayerIsCombatAllowed(ent.pac_damagezone_killer) then return end
-			if not requesting_corpses[ent.pac_damagezone_killer] then return end
-			net.Start("pac_send_ragdoll")
-			net.WriteUInt(ent:EntIndex(), 12)
-			net.WriteEntity(rag)
-			net.Broadcast()
+			send_ragdoll(ent, rag)
 		end)
 
 		net.Receive("pac_request_ragdoll_sends", function(len, ply)

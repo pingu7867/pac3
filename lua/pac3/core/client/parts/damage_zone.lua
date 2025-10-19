@@ -224,6 +224,7 @@ local spawn_queue = {}
 local tick = 0
 
 local hitparts_dump = {}
+
 --multiple entities targeted + hit marker creating parts and setting up every time = FRAME DROPS
 --so we tried the budget method, it didn't change the fact that it costs a lot.
 
@@ -311,12 +312,17 @@ local ragdolls = {}
 
 net.Receive("pac_send_ragdoll", function(len)
 	local entindex = net.ReadUInt(12)
-	local rag = net.ReadEntity()
-	ragdolls[entindex] = rag
+	local ragindex = net.ReadUInt(12)
+	timer.Simple(0.01, function()
+		local rag = Entity(ragindex)
+		ragdolls[entindex] = rag
+	end)
 	timer.Simple(2, function() ragdolls[entindex] = nil end)
 end)
 
 local function TryAttachPartToAnEntity(self,group,parent_ent,marker_ent,killing)
+	if not IsValid(self) or not IsValid(group) or not IsValid(parent_ent) or not IsValid(marker_ent) then return end
+
 	local can_do_ragdolls = GetConVar("pac_sv_damage_zone_allow_ragdoll_hitparts"):GetBool()
 	if killing and can_do_ragdolls then
 		if isstring(killing) then
@@ -345,7 +351,6 @@ local function TryAttachPartToAnEntity(self,group,parent_ent,marker_ent,killing)
 				timer.Simple(0.05, function()
 					rag = ragdolls[ent_index]
 					if IsValid(rag) then
-						rag = rag
 						TryAttachPartToAnEntity(self,group,rag,ent, "ragdoll")
 					end
 				end)
@@ -684,7 +689,10 @@ function PART:OnShow()
 	self.next_DOT = self.NoInitialDOT and CurTime() + self.DOTTime or CurTime() - 1
 
 	if pace.still_loading_wearing then return end
-	if self.validTime > SysTime() then return end
+	if self.validTime > SysTime() then
+		local ent = self:GetRootPart():GetOwner()
+		return
+	end
 
 	if self.Preview then
 		self:PreviewHitbox()
@@ -733,9 +741,27 @@ function PART:SetAttachPartsToTargetEntity(b)
 	end
 end
 
+local function setup_removes(self, duration, part_ref, ent)
+	timer.Simple(math.Clamp(duration, 0, 30), function()
+		if IsValid(part_ref) then part_ref:Remove() end
+		if IsValid(ent) and self.RemoveDuplicateHitMarkers then
+			if ent.pac_hitmark_part and ent.pac_hitmark_part:IsValid() then
+				ent.pac_hitmark_part:Remove()
+			end
+
+			if not self.AttachPartsToTargetEntity then
+				SafeRemoveEntityDelayed(ent, 0.5)
+			end
+		end
+	end)
+end
+
 --revertable to projectile part's version which wastes time creating new parts but has less issues
-function PART:LegacyAttachToEntity(part, ent)
+function PART:LegacyAttachToEntity(part, ent, parent_ent, killing)
 	if not part:IsValid() then return false end
+	if not IsValid(ent) or not IsValid(parent_ent) then return false end
+	local duration = 0
+	if killing then duration = self.KillMarkerLifetime else duration = self.HitMarkerLifetime end
 
 	ent.pac_draw_distance = 0
 
@@ -743,29 +769,45 @@ function PART:LegacyAttachToEntity(part, ent)
 
 	local group = pac.CreatePart("group", self:GetPlayerOwner())
 	table.insert(hitparts_dump, {self, group, ent})
-	self.force_cleanup_hitparts = CurTime() + math.max(self.HitMarkerLifetime, self.KillMarkerLifetime)
+	self.force_cleanup_hitparts = CurTime() + duration
+
 	group:SetShowInEditor(false)
 
 	local part_clone = pac.CreatePart(tbl.self.ClassName, self:GetPlayerOwner(), tbl, tostring(tbl))
 	group:AddChild(part_clone)
 
+	if killing then
+		local entindex = parent_ent:EntIndex()
+		local ent_index = parent_ent:EntIndex()
+		local can_do_ragdolls = GetConVar("pac_sv_damage_zone_allow_ragdoll_hitparts"):GetBool() and self.AttachPartsToTargetEntity
+		local can_do_players = (GetConVar("pac_sv_prop_outfits"):GetInt() == 2) or (parent_ent.IsBot and parent_ent:IsBot())
+		if can_do_ragdolls then
+			timer.Simple(0.05, function()
+				rag = ragdolls[ent_index]
+				if IsValid(rag) then
+					ent = rag
+					ent.pac_killmark_part = group
+					group:SetOwnerName(ent:EntIndex())
+					group.SetOwner = function(s) s.Owner = ent end
+					part_clone:SetHide(false)
+					group:CallRecursive("Think")
+					setup_removes(self, duration, group, ent)
+				end
+			end)
+			return
+		end
+		ent.pac_killmark_part = group
+	else
+		ent.pac_hitmark_part = group
+		--for remove duplicate hitmarkers
+		parent_ent.previous_pac_hitmark_part = group
+	end
+
 	group:SetOwner(ent)
 	group.SetOwner = function(s) s.Owner = ent end
 	part_clone:SetHide(false)
-
-	local id = group.Id
-	local owner_id = self:GetPlayerOwnerId()
-	if owner_id then
-		id = id .. owner_id
-	end
-
-	ent:CallOnRemove("pac_hitmarker_" .. id, function() group:Remove() end)
 	group:CallRecursive("Think")
-
-	ent.pac_hitmark_part = group
-	ent.pac_hitmark = self --that's just the launcher though
-
-	return true
+	setup_removes(self, duration, group, ent)
 end
 
 net.Receive("pac_hit_results", function(len)
@@ -785,9 +827,14 @@ net.Receive("pac_hit_results", function(len)
 	local do_ents_feedback = net.ReadBool()
 	local ents_hit = {}
 	local ents_kill = {}
+	local ent_keyed_kills_list = {}
 	if do_ents_feedback then
 		ents_hit = net.ReadTable(true)
-		if kill then ents_kill = net.ReadTable(true) end
+		if kill then ents_kill = net.ReadTable(true)
+			for i,ent in ipairs(ents_kill) do
+				ent_keyed_kills_list[ent] = true
+			end
+		end
 	end
 	part_setup_runtimes = 0
 
@@ -811,48 +858,83 @@ net.Receive("pac_hit_results", function(len)
 	--grabbed the function from projectile.lua
 	--here, we spawn a static hitmarker and the max delay is 8 seconds
 	local function spawn(part, pos, ang, parent_ent, duration, owner, killing)
-		if not IsValid(owner) then return end
-		if part == self then return end --stop infinite feedback loops of using the damagezone as a hitmarker
-		--what if people employ a more roundabout method? CRACKDOWN!
-
-
-		if not recycle_hitmark:GetBool() then
-			local ent = parent_ent
-			local cs_ent = false
-			if not self.AttachPartsToTargetEntity then
-				ent = pac.CreateEntity("models/props_junk/popcan01a.mdl")
-				ent.is_pac_hitmarker = true
-				cs_ent = true
-				ent:SetNoDraw(true)
-				ent:SetPos(pos)
-			end
-			self:LegacyAttachToEntity(killing and self.KillMarkerPart or self.HitMarkerPart, ent)
-
-			timer.Simple(math.Clamp(killing and self.KillMarkerLifetime or self.HitMarkerLifetime, 0, 30), function()
-				if IsValid(ent) then
-					if ent.pac_hitmark_part and ent.pac_hitmark_part:IsValid() then
-						ent.pac_hitmark_part:Remove()
-					end
-
-					if cs_ent then
-						SafeRemoveEntityDelayed(ent, 0.5)
-					end
-				end
-			end)
-			return
-		end
-
+		if not killing and not IsValid(self.HitMarkerPart) then return end
+		
 		if not owner.hitparts then owner.hitparts = {} end
 
 		if owner.stop_hit_markers_until then
 			if owner.stop_hit_markers_until > CurTime() then return end
 		end
-		if self.lag_risk and math.random() > 0.5 then return end
+		if self.lag_risk and math.random() > 0.2 then return end
 		if not self:IsValid() then return end
 		if not part:IsValid() then return end
+		if not IsValid(owner) then return end
 
-
+		if part == self then return end --stop infinite feedback loops of using the damagezone as a hitmarker
+		--what if people employ a more roundabout method? CRACKDOWN!
 		local start = SysTime()
+
+		if not recycle_hitmark:GetBool() then
+			local ent = parent_ent
+			if not self.AttachPartsToTargetEntity then
+				ent = pac.CreateEntity("models/props_junk/popcan01a.mdl")
+				ent.is_pac_hitmarker = true
+				ent:SetNoDraw(true)
+				ent:SetPos(pos)
+			end
+
+			if self.RemoveDuplicateHitMarkers then
+				if IsValid(parent_ent.previous_pac_hitmark_part) then
+					parent_ent.previous_pac_hitmark_part:Remove()
+				end
+				if killing then
+					if IsValid(ent.pac_killmark_part) then
+						ent.pac_killmark_part:Remove()
+					end
+				else
+					if IsValid(ent.pac_hitmark_part) then
+						ent.pac_hitmark_part:Remove()
+					end
+				end
+			end
+
+			local b
+			local part_ref
+			local applied_ragdoll = false
+			if self.AttachPartsToTargetEntity then --basic checks
+				local can_do_ragdolls = GetConVar("pac_sv_damage_zone_allow_ragdoll_hitparts"):GetBool() and killing
+				if killing then
+					if not can_do_ragdolls then
+						return
+					else
+						local ent_index = parent_ent:EntIndex()
+						timer.Simple(0.1, function()
+							rag = ragdolls[ent_index]
+							if IsValid(rag) then
+								ent = rag
+								b, part_ref = self:LegacyAttachToEntity(part, rag, parent_ent, killing)
+								applied_ragdoll = b
+							end
+						end)
+					end
+				end
+				if parent_ent:IsPlayer() then
+					if GetConVar("pac_sv_prop_outfits"):GetInt() ~= 2 then
+						return
+					end
+				end
+				if not applied_ragdoll then
+					self:LegacyAttachToEntity(part, ent, parent_ent, killing)
+				end
+			else
+				self:LegacyAttachToEntity(part, ent, parent_ent, killing)
+			end
+			local creation_delta = SysTime() - start
+
+			return creation_delta
+		end
+
+
 		local ent = pac.CreateEntity("models/props_junk/popcan01a.mdl")
 		if not ent:IsValid() then return end
 		ent.is_pac_hitmarker = true
@@ -897,7 +979,7 @@ net.Receive("pac_hit_results", function(len)
 				self:AssignFloatingPartToEntity(free_spot, newpart, owner, ent, parent_ent, part.UniqueID, csent_id)
 
 				if self.Preview then MsgC("hitmarker:", bool and Color(0,255,0) or Color(0,200,255), bool and "existing" or "created", " : ", newpart, "\n") end
-				timer.Simple(math.Clamp(duration, 0, 8), function()
+				timer.Simple(math.Clamp(duration, 0, 30), function()
 					if ent:IsValid() then
 						if parent_ent.pac_dmgzone_hitmarker_ents then
 							for id,ent2 in pairs(parent_ent.pac_dmgzone_hitmarker_ents) do
@@ -929,27 +1011,27 @@ net.Receive("pac_hit_results", function(len)
 				self.HitSoundPart:PlaySound()
 			end
 		end
-		if self.HitMarkerPart then
+		if IsValid(self.HitMarkerPart) then
 			for _,ent in ipairs(ents_hit) do
 				if IsValid(ent) then
 					local ang = (ent:GetPos() - pos):Angle()
-					if ents_kill[ent] then
+					if ent_keyed_kills_list[ent] then
 						if self.AllowOverlappingHitMarkers then
-							part_setup_runtimes = part_setup_runtimes + (spawn(self.HitMarkerPart, ent:WorldSpaceCenter(), ang, ent, self.HitMarkerLifetime, owner) or 0)
+							part_setup_runtimes = part_setup_runtimes + (spawn(self.HitMarkerPart, ent:WorldSpaceCenter(), ang, ent, self.HitMarkerLifetime, owner, true) or 0)
 						end
 					else
-						part_setup_runtimes = part_setup_runtimes + (spawn(self.HitMarkerPart, ent:WorldSpaceCenter(), ang, ent, self.HitMarkerLifetime, owner) or 0)
+						part_setup_runtimes = part_setup_runtimes + (spawn(self.HitMarkerPart, ent:WorldSpaceCenter(), ang, ent, self.HitMarkerLifetime, owner, false) or 0)
 					end
 				end
 			end
 		end
 	end
 	if kill then
-		self.dmgzone_kill_done = CurTime()
 		if ValidSound(self.KillSoundPart) then
 			self.KillSoundPart:PlaySound()
 		end
-		if self.KillMarkerPart then
+		self.dmgzone_kill_done = CurTime()
+		if IsValid(self.KillMarkerPart) then
 			for _,ent in ipairs(ents_kill) do
 				if IsValid(ent) then
 					local ang = (ent:GetPos() - pos):Angle()
@@ -958,7 +1040,8 @@ net.Receive("pac_hit_results", function(len)
 			end
 		end
 	end
-	if self.HitMarkerPart or self.KillMarkerPart then
+	if IsValid(self.HitMarkerPart) or IsValid(self.KillMarkerPart) then
+		if not recycle_hitmark:GetBool() then self:SetInfo("time to create parts: " .. (part_setup_runtimes * 1000) .. " ms") return end
 		if owner.hitparts then
 			self:SetInfo(table.Count(owner.hitparts) .. " hitmarkers in slot")
 		end
@@ -966,7 +1049,6 @@ net.Receive("pac_hit_results", function(len)
 end)
 
 concommand.Add("pac_cleanup_damagezone_hitmarks", function()
-	print(hitparts_dump, #hitparts_dump .. " parts detected")
 	for i,v in ipairs(hitparts_dump) do
 		if v[2]:IsValid() then
 			v[2]:Remove()
@@ -999,7 +1081,6 @@ function PART:OnRemove()
 		pac.RemoveHook(v, "pace_draw_hitbox")
 	end
 	self:ClearHitMarkers()
-	--remove itself
 	pac.InsertSpecialTrackedPart(self:GetPlayerOwner(), self, true)
 end
 
@@ -1297,8 +1378,8 @@ function PART:Initialize()
 			end
 		end
 	end)
-
 	pac.InsertSpecialTrackedPart(self:GetPlayerOwner(), self)
+
 end
 
 function PART:SetRadius(val)
