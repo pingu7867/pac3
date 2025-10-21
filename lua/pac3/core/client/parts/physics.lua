@@ -74,7 +74,8 @@ function PART:SetCollisions(b)
 	self.Collisions = b
 
 	if self.phys:IsValid() then
-		self.phys:EnableCollisions(b)
+		local physobj = self.phys
+		physobj:EnableCollisions(b)
 	end
 end
 

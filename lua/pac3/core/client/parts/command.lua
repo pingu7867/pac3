@@ -104,6 +104,7 @@ function PART:OnShow(from_rendering)
 end
 
 function PART:OnHide()
+	if pace.still_loading_wearing then return end
 	if self.ExecuteOnShow and self.OnHideString ~= "" then
 		self:Execute(self.OnHideString)
 	end

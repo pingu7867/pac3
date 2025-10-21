@@ -10,6 +10,7 @@ PART.Group = 'effects'
 
 PART.ImplementsDoubleClickSpecified = true
 
+
 BUILDER:StartStorableVars()
 	BUILDER:SetPropertyGroup("generic")
 		BUILDER:GetSet("Path", "", {editor_panel = "sound"})
@@ -268,14 +269,48 @@ function PART:SetPath(path)
 		local info = sound.GetProperties(path)
 		if info then
 			path = info.sound
+			if istable(path) then -- some soundscripts have multiple sounds
+				for i,path2 in ipairs(path) do
+					if not string.StartsWith(path2, "http") or not pac.resource.Download(path2, function(path) load("data/" .. path2) end) then
+						load("sound/" .. path2)
+					end
+				end
+			end
 		end
-
+		if not isstring(path) then continue end
 		if not string.StartsWith(path, "http") or not pac.resource.Download(path, function(path) load("data/" .. path) end)
 
 			then load("sound/" .. path)
 		end
 	end
 	self.paths = paths
+
+
+	--missing sounds check
+	local snd_list = "\n"
+	local errors = false
+	local function IsPossibleSoundscript(str)
+		local extensions = {".mp3", ".wav", ".ogg", ".flac"}
+		for i,v in ipairs(extensions) do
+			if string.find(str, ".") and not string.find(str, v) then
+				if sound.GetProperties(str) ~= nil then return true end
+			end
+		end
+		return false
+	end
+
+	self:SetError()
+	for i,soundfile in ipairs(self.paths) do
+		if soundfile == "" then continue end
+		if string.StartsWith(soundfile, "http") then continue end
+		if not file.Exists("sound/" .. soundfile, "GAME") then
+			if not IsPossibleSoundscript(soundfile) then
+				errors = true
+				snd_list = snd_list .. "\n" .. soundfile
+			end
+		end 
+	end
+	if errors then self:SetError("sounds not found : " .. snd_list) end
 
 end
 
@@ -287,6 +322,7 @@ end
 
 function PART:PlaySound(_, additiveVolumeFraction)
 	--PrintTable(self.streams)
+	self.stopsound = false
 	additiveVolumeFraction = additiveVolumeFraction or 0
 	local pos = self:GetWorldPosition()
 	if pos:DistToSqr(pac.EyePos) > pac.sounds_draw_dist_sqr then return end
@@ -357,7 +393,6 @@ function PART:OnShow(from_rendering)
 	if not from_rendering then
 		self:PlaySound()
 	end
-	self.stopsound = false
 end
 
 function PART:OnDoubleClickSpecified()

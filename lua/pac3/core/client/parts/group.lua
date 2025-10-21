@@ -8,6 +8,7 @@ PART.Description = "right click to add parts"
 BUILDER:StartStorableVars()
 	BUILDER:GetSet("Duplicate", false)
 	BUILDER:GetSet("OwnerName", "self")
+	BUILDER:GetSet("ForceTranslucent", false)
 	BUILDER:GetSet("ModelTracker", "", {hide_in_editor = true})
 	BUILDER:GetSet("ClassTracker", "", {hide_in_editor = true})
 BUILDER:EndStorableVars()
@@ -137,6 +138,33 @@ function PART:OnVehicleChanged(ply, vehicle)
 	if self.OwnerName == "active vehicle" then
 		self:UpdateOwnerName()
 	end
+end
+
+--derives from base_part
+function PART:Think()
+	if not self.Enabled then return end
+	if self.ThinkTime ~= 0 and self.last_think and self.last_think > pac.RealTime then return end
+
+	if not self.AlwaysThink and self:IsHiddenCached() then
+		self:AlwaysOnThink() -- for things that drive general logic
+		-- such as processing outfit URL downloads
+		-- without calling probably expensive self:OnThink()
+		return
+	end
+
+	if self.delayed_variables then
+
+		for _, data in ipairs(self.delayed_variables) do
+			self["Set" .. data.key](self, data.val)
+		end
+
+		self.delayed_variables = nil
+	end
+
+	self:AlwaysOnThink() -- for things that drive general logic
+	-- such as processing outfit URL downloads
+	-- without calling probably expensive self:OnThink()
+	self:OnThink()
 end
 
 BUILDER:Register()

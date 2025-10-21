@@ -20,26 +20,40 @@ PART.Icon = 'icon16/clock.png'
 PART.ImplementsDoubleClickSpecified = true
 
 BUILDER:StartStorableVars()
-	BUILDER:GetSet("Event", "", {enums = function(part)
-		local output = {}
+	BUILDER:SetPropertyGroup("generic")
+		:PropertyOrder("Name")
+		:PropertyOrder("Hide")
+	BUILDER:SetPropertyGroup("conditions")
+		BUILDER:GetSet("Event", "", {enums = function(part)
+			local output = {}
 
-		for i, event in pairs(part.Events) do
-			if not event.IsAvailable or event:IsAvailable(part) then
-				output[i] = event
+			for i, event in pairs(part.Events) do
+				if not event.IsAvailable or event:IsAvailable(part) then
+					output[i] = event
+				end
 			end
-		end
 
-		return output
-	end, description = "The type of condition used to determine whether to hide or show parts.\nCommon events are button, command, timer, timerx, is_on_ground, health_lost, is_touching"})
-	BUILDER:GetSet("Operator", "find simple", {enums = function(part) local tbl = {} for i,v in ipairs(part.Operators) do tbl[v] = v end return tbl end, description = "How the event will compare its source data with your reference value. PAC will try automatically pick an appropriate operator based on the event.\n\nfind and find simple searches for a keyword match (applies to text only).\nequal looks for an exact match (applies for text and numbers)\nabove, below etc are number comparators and should be self-explanatory.\nmaybe does a coin flip ignoring everything"})
-	BUILDER:GetSet("Arguments", "", {hidden = false, description = "The internal text representation of the event's arguments, how it gets saved.\nThe dynamic fields access that very same thing, but a text field is useful to review and copy all the arguments at once."})
-	BUILDER:GetSet("Invert", true, {description = "invert: show when condition is met\nuninverted: hide when condition is met"})
-	BUILDER:GetSet("RootOwner", true)
-	BUILDER:GetSet("AffectChildrenOnly", false, {description = "Instead of the parent, the event's children will be affected instead"})
-	BUILDER:GetSet("ZeroEyePitch", false)
-	BUILDER:GetSetPart("TargetPart", {editor_friendly = "ExternalOriginPart", description = "Only applies to some scale or velocity-related events, picks a different point as a reference for measurement.\nFormerly known as target part. If you remember it, forget this misnomer."})
-	BUILDER:GetSetPart("DestinationPart", {editor_friendly = "TargetedPart", description = "Instead of the parent, targets a single part to show/hide."})
-	BUILDER:GetSet("MultipleTargetParts", "", {description = "Instead of the parent, targets a list of parts to show/hide.\nThe list takes the form of UIDs or names separated by semicolons. You can use bulk select to quickly build the list."})
+			return output
+		end, description = "The type of condition used to determine whether to hide or show parts.\nCommon events are button, command, timer, timerx, is_on_ground, health_lost, is_touching"})
+		BUILDER:GetSet("Operator", "find simple", {enums = function(part) local tbl = {} for i,v in ipairs(part.Operators) do tbl[v] = v end return tbl end, description = "How the event will compare its source data with your reference value. PAC will try automatically pick an appropriate operator based on the event.\n\nfind and find simple searches for a keyword match (applies to text only).\nequal looks for an exact match (applies for text and numbers)\nabove, below etc are number comparators and should be self-explanatory.\nmaybe does a coin flip ignoring everything"})
+		BUILDER:GetSet("Arguments", "", {hidden = false, description = "The internal text representation of the event's arguments, how it gets saved.\nThe dynamic fields access that very same thing, but a text field is useful to review and copy all the arguments at once."})
+		BUILDER:GetSet("Invert", true, {description = "invert: show when condition is met\nuninverted: hide when condition is met"})
+
+	BUILDER:SetPropertyGroup("targeting")
+		BUILDER:GetSet("AffectChildrenOnly", false, {description = "Instead of the parent, the event's children will be affected instead"})
+		BUILDER:GetSetPart("DestinationPart", {editor_friendly = "TargetedPart", description = "Instead of the parent, targets a single part to show/hide."})
+		BUILDER:GetSet("MultipleTargetParts", "", {description = "Instead of the parent, targets a list of parts to show/hide.\nThe list takes the form of UIDs or names separated by semicolons. You can use bulk select to quickly build the list."})
+
+	BUILDER:SetPropertyGroup("specialized")
+		BUILDER:GetSet("RootOwner", true)
+		BUILDER:GetSetPart("TargetPart", {editor_friendly = "ExternalOriginPart", description = "Only applies to some scale or velocity-related events, picks a different point as a reference for measurement.\nFormerly known as target part. If you remember it, forget this misnomer."})
+		BUILDER:GetSet("ZeroEyePitch", false)
+
+	BUILDER:SetPropertyGroup("time mods")
+		--internal delays or padding will reduce bloat on command management and timerx events
+		BUILDER:GetSet("ExtraTime", 0, {description = "allows to show parts for some time before the event is supposed to hide the parts"})
+		BUILDER:GetSet("Delay", 0, {description = "like a timerx 'above' event : turns on only if held for this time"})
+		BUILDER:GetSet("Limit", 0, {description = "like a timerx 'below' event : turns off if held for this time"})
 BUILDER:EndStorableVars()
 
 PART.Tutorials = {}
@@ -187,6 +201,7 @@ local tracked_events = {
 	lockpart_grabbing = true
 }
 function PART:SetEvent(event)
+	self.already_fixed_args = false
 	local reset = (self.Arguments == "") or
 	(self.Arguments ~= "" and self.Event ~= "" and self.Event ~= event)
 
@@ -285,6 +300,7 @@ function PART:SetProperty(key, val)
 end
 
 function PART:SetArguments(str)
+	self.already_fixed_args = false
 	self.Arguments = str
 	if pace.IsActive() and pac.LocalPlayer == self:GetPlayerOwner() then
 		if not self:GetShowInEditor() then return end
@@ -335,10 +351,13 @@ function PART:GetOrFindCachedPart(uid_or_name)
 		self.erroring_cached_parts[uid_or_name] = true
 		self.bad_uid_search = self.bad_uid_search or 0
 		self.bad_uid_search = self.bad_uid_search + 1
-		if self:GetPlayerOwner() == LocalPlayer() and not pace.still_loading_wearing then
+		if self:GetPlayerOwner() == LocalPlayer() and not pace.still_loading_wearing and self.bad_uid_search > 2 then
+			self:SetWarning("Problem reported")
+			pace.ReportProblem(self.UniqueID, {part = self, description = "<reference error> part failed to find " .. uid_or_name, solution = "create such part and reassign, or remove the reference"})
 			pace.FlashNotification("performance warning! " .. tostring(self) .. " keeps searching for parts not finding anything! " .. tostring(uid_or_name) .. " may be unused!")
 		end
 	else
+		self.bad_uid_search = nil
 		self.found_cached_parts[uid_or_name] = part
 		return part
 	end
@@ -1964,21 +1983,43 @@ PART.OldEvents = {
 
 			local ply = self:GetPlayerOwner()
 
-			local events = ply.pac_command_events
-
-			if events then
-				local found = nil
-				for _, data in pairs(events) do
-					if self:StringOperator(data.name, find) then
-						if data.on > 0 then
-							found = data.on == 1
-						elseif data.time + time > pac.RealTime then
-							found = true
+			if self.Operator == "equal" then
+				if ply.pac_command_events and ply.pac_command_events[find] then
+					local found = nil
+					if ply.pac_command_events[find].on > 0 then
+						found = ply.pac_command_events[find].on == 1
+					elseif ply.pac_command_events[find].time + time > pac.RealTime then
+						found = true
+					end
+					return found
+				end
+			else
+				local events = self.cached_command_event_matches or ply.pac_command_events
+				self.cached_command_event_matches = nil
+				
+				if self.cached_command_event_matches == nil then
+					self.cached_command_event_matches = {}
+					for _, data in pairs(ply.pac_command_events) do
+						if self:StringOperator(data.name, find) then
+							table.insert(self.cached_command_event_matches, data)
 						end
 					end
 				end
-				return found
+				if events then
+					local found = nil
+					for _, data in ipairs(events) do
+						if self:StringOperator(data.name, find) then
+							if data.on > 0 then
+								found = data.on == 1
+							elseif data.time + time > pac.RealTime then
+								found = true
+							end
+						end
+					end
+					return found
+				end
 			end
+
 		end,
 	},
 
@@ -2879,6 +2920,43 @@ PART.OldEvents = {
 		end
 	},
 
+	nearest_life_valid = {
+		operator_type = "none", preferred_operator = "find simple",
+		tutorial_explanation = "If this part is using nearest_life aimparts or bones, this event will determine whether there is a valid target",
+		arguments = {{uid = "string"}},
+		userdata = {{enums = function()
+			local output = {}
+			local parts = pac.GetLocalParts()
+
+			for i, part in pairs(parts) do
+				if not pac.StringFind(part.AimPartName, "NEAREST_LIFE") and not pac.StringFind(part.Bone, "NEAREST_LIFE") then
+					continue
+				end
+				local parent_string = IsValid(part:GetParent()) and ("; in " .. part:GetParent().ClassName  .. " " .. part:GetParent():GetName()) or ""
+				output["[UID:" .. string.sub(i,1,16) .. "...] " .. part:GetName() .. parent_string] = part.UniqueID
+			end
+
+			return output
+		end}},
+		callback = function(self, ent, uid)
+			local part = self
+			if uid ~= "" then
+				part2 = self:GetOrFindCachedPart(uid)
+				if part2 then
+					part = part2
+				end
+			end
+			self:SetInfo(tostring(part) .. "\n" .. tostring(part.nearest_life_ent))
+			if part.nearest_life_params then
+				if part.nearest_life_ent == self:GetPlayerOwner() then return false end
+			end
+			if part.nearest_life_bone_params then
+				if part.nearest_life_ent == self:GetPlayerOwner() then return false end
+			end
+			return IsValid(part.nearest_life_ent)
+		end,
+	},
+
 	or_gate = {
 		operator_type = "none", preferred_operator = "find simple",
 		tutorial_explanation = "combines multiple events into an OR gate, the event will activate as soon as one of the events listed is activated (taking inverts into account).\n\nuids is a list (separated by semicolons) of part identifiers (UniqueIDs or names)\n\nAn easy way to gather them is to use bulk select (ctrl+click) and to right click back on the or_gate",
@@ -2978,7 +3056,7 @@ PART.OldEvents = {
 			local uid_splits = string.Split(uids, ";")
 			for i,uid in ipairs(uid_splits) do
 				local part = self:GetOrFindCachedPart(uid)
-				if part:IsValid() then
+				if IsValid(part) then
 					local raw = part.raw_event_condition
 					local b = false
 					if ignore_inverts then
@@ -3033,6 +3111,15 @@ PART.OldEvents = {
 			return string.format("steamid: [%s %s]", self.Operator, idSumm)
 		end
 	},
+
+	is_in_editor = {
+		operator_type = "none",
+		tutorial = "activates when the player is in the PAC3 editor",
+		callback = function(self, ent)
+			return ent:GetNW2Bool("pac_in_editor")
+		end,
+	},
+
 }
 
 
@@ -3609,8 +3696,20 @@ function PART:GetNiceName()
 	local event_name = self:GetEvent()
 
 	if not PART.Events[event_name] then return "unknown event" end
-
-	return self:GetTargetingModePrefix() .. (PART.Events[event_name]:GetNiceName(self, get_owner(self)) or "")
+	self.trigtime = self.trigtime or 0
+	local trigtime_avg = self.trigtime
+	self.trigtime_avgs = self.trigtime_avgs or {}
+	table.insert(self.trigtime_avgs, self.trigtime)
+	if #self.trigtime_avgs >= 100 then
+		table.remove(self.trigtime_avgs,1)
+		local sum = 0
+		for i=1,99 do
+			sum = sum + self.trigtime_avgs[i]
+		end
+		trigtime_avg = sum / 99
+	end
+	
+	return string.format("%f", trigtime_avg):sub(1,4)  .. " : " .. self:GetTargetingModePrefix() .. (PART.Events[event_name]:GetNiceName(self, get_owner(self)) or "")
 end
 
 local function is_hidden_by_something_else(part, ignored_part)
@@ -3643,12 +3742,19 @@ local function should_trigger(self, ent, eventObject)
 	end
 
 	local b = false
+	local previous_b = self.raw_event_condition
+
 	if eventObject.ParseArguments then
 		b = eventObject:Think(self, ent, eventObject:ParseArguments(self)) or false
 	else
 		b = eventObject:Think(self, ent, self:GetParsedArgumentsForObject(eventObject)) or false
 	end
 	self.raw_event_condition = b
+	if previous_b ~= self.raw_event_condition then
+		if self.raw_event_condition then
+			self.activation_time = CurTime()
+		end
+	end
 
 	if self.Invert then
 		b = not b
@@ -3660,7 +3766,41 @@ local function should_trigger(self, ent, eventObject)
 
 	self.is_active = b
 
-	return b
+	if self.timemod then
+		if self.ExtraTime ~= 0 then
+			if self.raw_event_condition then
+				self.extra_time = CurTime() + self.ExtraTime
+				return b
+			elseif self.extra_time then
+				if CurTime() < self.extra_time then
+					return not b
+				else self.extra_time = nil end
+			end
+		end
+		--timerx above mode
+		if (self.Delay ~= 0) then
+			if not b and CurTime() < self.activation_time + self.Delay then b = not b end
+		end
+		--timerx below mode
+		if (self.Limit ~= 0) then
+			if not b and CurTime() > self.activation_time + self.Limit then b = not b end
+		end
+	end
+
+	return b, previous_b
+end
+
+function PART:SetDelay(val)
+	self.Delay = val
+	self.timemod = self.Delay ~= 0 or self.Limit ~= 0 or self.ExtraTime ~= 0
+end
+function PART:SetLimit(val)
+	self.Limit = val
+	self.timemod = self.Delay ~= 0 or self.Limit ~= 0 or self.ExtraTime ~= 0
+end
+function PART:SetExtraTime(val)
+	self.ExtraTime = val
+	self.timemod = self.Delay ~= 0 or self.Limit ~= 0 or self.ExtraTime ~= 0
 end
 
 PART.last_event_triggered = false
@@ -3693,14 +3833,10 @@ function PART:fix_args()
 			end
 		end
 	end
+	self.already_fixed_args = true
 end
 
 function PART:OnThink()
-	self.nextactivationrefresh = self.nextactivationrefresh or CurTime()
-	if not self.singleactivatestate and self.nextactivationrefresh < CurTime() then
-		self.singleactivatestate = true
-	end
-
 	local ent = get_owner(self)
 	if not ent:IsValid() then return end
 
@@ -3708,14 +3844,14 @@ function PART:OnThink()
 
 	if not data then return end
 
-	self:fix_args()
+	if not self.already_fixed_args then self:fix_args() end
 	self:TriggerEvent(should_trigger(self, ent, data))
 
-	if pace and pace.IsActive() and self.Name == "" then
+	--[[if pace and pace.IsActive() and self.Name == "" then
 		if self.pace_properties and self.pace_properties["Name"] and self.pace_properties["Name"]:IsValid() then
 			self.pace_properties["Name"]:SetText(self:GetNiceName())
 		end
-	end
+	end]]
 
 end
 
@@ -3763,55 +3899,108 @@ function PART:SetAffectChildrenOnly(b)
 end
 
 function PART:OnRemove()
-	if not self.AffectChildrenOnly then
-		local parent = self:GetParent()
-		if parent:IsValid() then
-			parent.active_events[self] = nil
-			parent.active_events_ref_count = parent.active_events_ref_count - 1
-			parent:CalcShowHide()
-		end
-	end
-	if IsValid(self.DestinationPart) then
-		self.DestinationPart.active_events[self] = nil
-		self.DestinationPart.active_events_ref_count = self.DestinationPart.active_events_ref_count - 1
-		self.DestinationPart:CalcShowHide()
-	end
+	self:TriggerEvent(false)
 	pac.RegisterPartToCache(self:GetPlayerOwner(), "button_events", self, true)
 end
 
+function PART:CalculateSchema()
+	local aco = self.AffectChildrenOnly
+	local tp = IsValid(self.DestinationPart)
+	local mtp = self.MultiTargetPart ~= nil
+	local parent = not (aco or tp or mtp)
+
+	self.schema = {parent, aco, tp, mtp}
+	return self.schema
+end
+
 function PART:TriggerEvent(b)
+	local stime = SysTime()
+	local event_trig_times = 0
+	local schema = self.schema
+	if not schema then schema = self:CalculateSchema() end
+
+
 	self.event_triggered = b -- event_triggered is just used for the editor
-	local single_targetpart = IsValid(self.DestinationPart)
+
+	--indexing this way shaves off a decent fraction of a microsecond
+	if schema[1] then
+		local parent = self:GetParent()
+		if parent:IsValid() then
+			--local _stime = SysTime()
+			parent:SetEventTrigger(self, b)
+			--event_trig_times = event_trig_times + (SysTime() - _stime)
+		end
+		local stime2 = SysTime()
+		self.trigtime = 1000000*(stime2 - stime)
+		return
+	end
+	if schema[2] then
+		for _, child in ipairs(self:GetChildren()) do
+			--local _stime = SysTime()
+			child:SetEventTrigger(self, b)
+			--event_trig_times = event_trig_times + (SysTime() - _stime)
+		end
+	end
+	if schema[3] then
+		self.DestinationPart:SetEventTrigger(self, b)
+		self.previousdestinationpart = self.DestinationPart
+	end
+	if schema[4] then
+		for _,part2 in ipairs(self.MultiTargetPart) do
+			if part2.SetEventTrigger then
+				--local _stime = SysTime()
+				part2:SetEventTrigger(self, b)
+				--event_trig_times = event_trig_times + (SysTime() - _stime)
+			end
+		end
+	end
+	
+	--[[local single_targetpart = IsValid(self.DestinationPart)
 
 	if single_targetpart then
+		--local _stime = SysTime()
 		self.DestinationPart:SetEventTrigger(self, b)
+		--event_trig_times = event_trig_times + (SysTime() - _stime)
 		self.previousdestinationpart = self.DestinationPart
 	else
 		if IsValid(self.previousdestinationpart) then
 			if self.DestinationPart ~= self.previousdestinationpart then --when editing, if we change the destination part we need to reset the old one
+				--local _stime = SysTime()
 				self.previousdestinationpart:SetEventTrigger(self, false)
+				--event_trig_times = event_trig_times + (SysTime() - _stime)
 			end
 		end
 	end
 
 	if self.MultiTargetPart then
 		for _,part2 in ipairs(self.MultiTargetPart) do
-			if part2.SetEventTrigger then part2:SetEventTrigger(self, b) end
+			if part2.SetEventTrigger then
+				--local _stime = SysTime()
+				part2:SetEventTrigger(self, b)
+				--event_trig_times = event_trig_times + (SysTime() - _stime)
+			end
 		end
 	end
 
 	if self.AffectChildrenOnly then
 		for _, child in ipairs(self:GetChildren()) do
+			--local _stime = SysTime()
 			child:SetEventTrigger(self, b)
+			--event_trig_times = event_trig_times + (SysTime() - _stime)
 		end
 	else
 		if not single_targetpart and not self.MultiTargetPart then --normal parent mode should only happen if nothing is set
 			local parent = self:GetParent()
 			if parent:IsValid() then
+				--local _stime = SysTime()
 				parent:SetEventTrigger(self, b)
+				--event_trig_times = event_trig_times + (SysTime() - _stime)
 			end
 		end
 	end
+	]]
+	local stime2 = SysTime()
+	self.trigtime = 1000000*(stime2 - stime)
 end
 
 PART.Operators = {
@@ -3984,7 +4173,6 @@ function PART:OnShow()
 		self.number = 0
 	end
 	self.showtime = CurTime()
-	self.singleactivatestate = true
 end
 
 function PART:OnAnimationEvent(ent)
@@ -4879,7 +5067,7 @@ net.Receive("pac_update_healthbars", function(len)
 			if cached_part then
 				tbl[i][cached_part.UniqueID] = value
 			end
-
+			
 		end
 	end
 	--PrintTable(tbl)

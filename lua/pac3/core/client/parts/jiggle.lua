@@ -94,6 +94,8 @@ end
 
 function PART:OnDraw()
 	local pos, ang = self:GetDrawPosition()
+	local original_pos = pos
+	local original_ang = ang
 
 	if self.first_time_reset then
 		self:Reset()
@@ -212,6 +214,11 @@ function PART:OnDraw()
 	else
 		self.ang = ang
 	end
+	self.ang_diff = Angle(
+		math.AngleDifference(original_ang.p,self.ang.p),
+		math.AngleDifference(original_ang.y,self.ang.y),
+		math.AngleDifference(original_ang.r,self.ang.r)
+	)
 end
 
 function PART:OnThink()

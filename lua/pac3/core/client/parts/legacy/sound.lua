@@ -163,6 +163,33 @@ function PART:SetSound(str)
 
 	self.Sound = str:gsub("\\", "/")
 
+	local sounds = self.Sound:Split(";")
+
+	self:SetError()
+
+	--missing sounds check
+	local snd_list = "\n"
+	local errors = false
+	local function IsPossibleSoundscript(str)
+		local extensions = {".mp3", ".wav", ".ogg"}
+		for i,v in ipairs(extensions) do
+			if string.find(str, ".") and not string.find(str, v) then
+				if sound.GetProperties(str) ~= nil then return true end
+			end
+		end
+		return false
+	end
+	for i,soundfile in ipairs(sounds) do
+		if soundfile == "" then continue end
+		if not file.Exists("sound/" .. soundfile, "GAME") then
+			if not IsPossibleSoundscript(soundfile) then
+				errors = true
+				snd_list = snd_list .. "\n" .. soundfile
+			end
+		end 
+	end
+	if errors then self:SetError("sounds not found : " .. snd_list) end
+
 	self:PlaySound()
 end
 
@@ -330,7 +357,6 @@ function PART:StopSound(force_stop)
 		end
 	end
 end
-
 function PART:OnDoubleClickSpecified()
 	if self.playing then
 		self:StopSound(true)
@@ -340,7 +366,6 @@ function PART:OnDoubleClickSpecified()
 		self.playing = true
 	end
 end
-
 local channels =
 {
 	CHAN_AUTO = 0,

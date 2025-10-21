@@ -166,12 +166,15 @@ end
 
 function PART:SetInfo(message)
 	self.Info = set_info(message, 1)
+	if message == nil then pace.RemoveProblem(self) end
 end
 function PART:SetWarning(message)
 	self.Info = set_info(message, 2)
+	if message == nil then pace.RemoveProblem(self) end
 end
 function PART:SetError(message)
 	self.Info = set_info(message, 3)
+	if message == nil then pace.RemoveProblem(self) end
 end
 
 do -- owner
@@ -475,6 +478,7 @@ do -- scene graph
 	end
 
 	function PART:CallRecursive(func, a,b,c)
+		self.doing_recursive_call = true
 		assert(c == nil, "EXTEND ME")
 		if self[func] then
 			self[func](self, a,b,c)
@@ -485,6 +489,7 @@ do -- scene graph
 				child[func](child, a,b,c)
 			end
 		end
+		self.doing_recursive_call = false
 	end
 
 	function PART:CallRecursiveOnClassName(class_name, func, a,b,c)
@@ -1374,7 +1379,9 @@ do
 		self:AlwaysOnThink() -- for things that drive general logic
 		-- such as processing outfit URL downloads
 		-- without calling probably expensive self:OnThink()
+		if not self.doing_recursive_call then pac.RecordPartRenderTime(self, false) end
 		self:OnThink()
+		if not self.doing_recursive_call then pac.RecordPartRenderTime(self, true) end
 	end
 
 	function PART:OnThink() end

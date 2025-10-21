@@ -34,6 +34,10 @@ function PART:OnShow(from_rendering)
 				amplitude = amplitude * (1 - (eyedistance / radius))
 			end
 			util.ScreenShake(position, amplitude, self.Frequency, duration, 0)
+
+			if not pace.IsActive() then return end
+			if self:GetPlayerOwner() ~= pac.LocalPlayer then return end
+			pac.ScreenShake(position, amplitude, self.Frequency, duration)
 		end
 	end
 end

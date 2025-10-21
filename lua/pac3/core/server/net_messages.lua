@@ -5,6 +5,7 @@ util.AddNetworkString("pac_chat_typing_mirror")
 util.AddNetworkString("pac_chat_typing_mirror_broadcast")
 util.AddNetworkString("pac_fire_bullets_for_singleplayer")
 util.AddNetworkString("pac_hide_bullets_get")
+util.AddNetworkString("pac_entity_created_for_singleplayer")
 
 do -- button event
 	net.Receive("pac.AllowPlayerButtons", function(length, client)
@@ -43,6 +44,18 @@ net.Receive("pac_chat_typing_mirror", function(len, ply)
 end)
 
 if game.SinglePlayer() then
+	pac.AddHook("OnEntityCreated", "pac_sv_spawn_props", function(ent)
+		timer.Simple(0, function()
+			if IsValid(ent.pac_prop_protection_owner) then
+				if (ent.pac_prop_protection_owner:GetInfoNum("pac_spawnmenu_props_spawn_as_parts", 0) == 1) then return end
+				net.Start("pac_entity_created_for_singleplayer")
+				net.WriteEntity(ent)
+				net.WriteEntity(ent.pac_prop_protection_owner)
+				net.Broadcast()
+			end
+		end)
+	end)
+
 	hook.Add("EntityFireBullets", "pac_bullet_singleplayer_hack", function(ent, data)
 		if ent:IsPlayer() then
 			net.Start("pac_fire_bullets_for_singleplayer") net.WriteEntity(ent) net.WriteUInt(game.GetAmmoID(data.AmmoType),8) net.Broadcast()

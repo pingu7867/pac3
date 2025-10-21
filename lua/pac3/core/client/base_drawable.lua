@@ -15,6 +15,7 @@ local render_PushFilterMag = render.PushFilterMag
 local BUILDER, PART = pac.PartTemplate("base_movable")
 
 PART.ClassName = "base_drawable"
+PART.is_base_drawable = true
 PART.BaseName = PART.ClassName
 
 BUILDER
@@ -161,14 +162,53 @@ function PART:IsDrawHidden()
 	return self.draw_hidden
 end
 
+function PART:OnParent(parent)
+	self.in_interpolator = false
+	if not parent then return end
+	local recursive_limit = 50
+	local i = 0
+	local bonemerge = self.ClassName == "model2" and self.BoneMerge
+	while IsValid(parent) do
+		if not IsValid(parent) then break end
+		if bonemerge then parent.contains_bonemerged_thing = true end
+		if parent.Translucent then self.translucent_parent = true end
+		if parent.ClassName == "interpolated_multibone" then self.in_interpolator = true self.translucent_parent = true end
+		if parent.GetParent then parent = parent:GetParent() end
+		if i > recursive_limit then break end
+	end
+	
+end
+
 local _self
 
 local function call_draw()
 	_self:OnDraw()
 end
 
+function PART:DeferDraw()
+	table.insert(pac.deferred_draws, self)
+	self.draw_deferred = true
+end
+
+function PART:DeferPreDraw()
+	table.insert(pac.deferred_predraws, self)
+	self.draw_deferred = true
+end
+
 function PART:Draw(draw_type)
 	if not self.OnDraw or not self.Enabled or self:IsHiddenCached() then return end
+
+	if draw_type == "opaque" then
+		--if self.translucent_parent and not self.Translucent then return end
+		if self.Translucent then return end
+	end
+	if self.ClassName == "interpolated_multibone" then
+		--if not self.draw_deferred then self:DeferPreDraw() return end
+	end
+	if ((self.translucent_parent or self.Translucent) and self.contains_bonemerged_thing) or self.in_interpolator then
+		--self.force_translucent = true
+		--if not self.draw_deferred then self:DeferDraw() return end
+	end
 
 	if
 		draw_type == "viewmodel" or draw_type == "hands" or

@@ -60,9 +60,44 @@ local function parts_from_ent(ent)
 	return uid_parts[owner_id] or {}
 end
 
+local ordered_ent_parts = {}
+local root_ent_parts = {}
 do
+	local function recursive_mark(parts, ent)
+		ordered_ent_parts[ent] = ordered_ent_parts[ent] or {}
+		if not parts or not ent then return end
+		for i,part in ipairs(parts) do
+			if part:IsValid() then
+				if part.Draw then table.insert(ordered_ent_parts[ent], part) end
+				if part:HasChildren() then
+					recursive_mark(part:GetChildren(), ent)
+				end
+			end
+		end
+	end
 	local function render_override(ent, type)
 		local parts = ent_parts[ent]
+		local parts2
+		--if ent:IsPlayer() then ent.force_translucent_rendering = true else ent.force_translucent_rendering = false end
+		if ent.rebuild_draworders then ordered_ent_parts[ent] = nil end
+		if ordered_ent_parts[ent] then
+			parts2 = ordered_ent_parts[ent]
+		else
+			ordered_ent_parts[ent] = {}
+			
+			for key, part in next, parts do
+				if part:IsValid() then
+					if not part:HasParent() then
+						recursive_mark(part:GetChildren(), ent)
+					end
+				else
+					parts[key] = nil
+				end
+			end
+			parts2 = ordered_ent_parts[ent]
+		end
+		pac.deferred_draws = {}
+		pac.deferred_predraws = {}
 
 		if parts == nil or next(parts) == nil then
 			pac.UnhookEntityRender(ent)
@@ -73,10 +108,12 @@ do
 			pac.ResetBones(ent)
 
 			for key, part in next, parts do
+				pac.RecordPartRenderTime(part, false)
 				if part:IsValid() then
 					if not part:HasParent() then
 						part:CallRecursive("BuildBonePositions")
 					end
+					pac.RecordPartRenderTime(part, true)
 				else
 					parts[key] = nil
 				end
@@ -92,21 +129,36 @@ do
 				end
 			end
 		else
-			for key, part in next, parts do
-				if part:IsValid() then
-					if not part:HasParent() then
-						if
-							part.OwnerName == "viewmodel" and type == "viewmodel" or
-							part.OwnerName == "hands" and type == "hands" or
-							part.OwnerName ~= "viewmodel" and part.OwnerName ~= "hands" and type ~= "viewmodel" and type ~= "hands"
-						then
-							if not part:IsDrawHidden() then
-								part:CallRecursive("Draw", type)
+			if ent.force_translucent_rendering then
+				if type == "opaque" then return end
+				for i,part in ipairs(parts2) do
+					pac.RecordPartRenderTime(part, false)
+					if not part:IsDrawHidden() then
+						part.force_translucent = true
+						part:Draw("translucent")
+					end
+					pac.RecordPartRenderTime(part, true)
+				end
+			else
+				for key, part in next, parts do
+					
+					if part:IsValid() then
+						if part.Draw then pac.RecordPartRenderTime(part, false) end
+						if not part:HasParent() then
+							if
+								part.OwnerName == "viewmodel" and type == "viewmodel" or
+								part.OwnerName == "hands" and type == "hands" or
+								part.OwnerName ~= "viewmodel" and part.OwnerName ~= "hands" and type ~= "viewmodel" and type ~= "hands"
+							then
+								if not part:IsDrawHidden() then
+									part:CallRecursive("Draw", type)
+								end
 							end
 						end
+						if part.Draw then pac.RecordPartRenderTime(part, true) end
+					else
+						parts[key] = nil
 					end
-				else
-					parts[key] = nil
 				end
 			end
 		end
@@ -859,6 +911,8 @@ do -- drawing
 					if radius < 32 then
 						radius = 128
 					end
+					pac.NL_calls_left = pac.NL_calls_left or {}
+					pac.NL_calls_left[ent] = 10
 				elseif not ent:IsNPC() then
 					radius = radius * 4
 				end
@@ -909,6 +963,13 @@ do -- drawing
 
 				::CONTINUE::
 			end
+			--hook.Run("CalcView")
+			--[[if pac.active_camera then
+				print(pac.active_camera)
+				for i,v in ipairs(pac.active_camera:GetParentList()) do
+					print(i, v)
+				end
+			end]]
 
 			-- we increment the framenumber here because we want to invalidate any FrameNumber caches when we draw
 			-- this prevents functions like movable:GetWorldMatrix() from caching the matrix in the update hook
@@ -1009,6 +1070,8 @@ do -- drawing
 			if IsValid(ent) then
 				if ent.pac_drawing and ent_parts[ent] then
 					drawing_hands = true
+					pac.SetupBones(ent)
+
 					pac.RenderOverride(ent, "hands")
 					drawing_hands = false
 				end

@@ -15,7 +15,12 @@ BUILDER:StartStorableVars()
 	BUILDER:GetSet("NearZ", -1)
 	BUILDER:GetSet("FarZ", -1)
 	BUILDER:GetSet("FOV", -1)
+	BUILDER:GetSet("RT", false)
+	BUILDER:GetSet("Preview", false)
+	BUILDER:GetSet("Hack", false)
 BUILDER:EndStorableVars()
+
+local ASPECT_RATIO = ScrW() / ScrH()
 
 for i, ply in ipairs(player.GetAll()) do
 	ply.pac_cameras = nil
@@ -213,13 +218,190 @@ function PART:CalcShowHide(from_rendering)
 	self.last_hidden = b
 end
 
+function PART:BuildFrustrum(obj, pos, ang)
+	local tris = {}
+	local verttip = {pos = pos, u = 0, v = 0 }
+	local scale = 50
+	local deg_fov = self.FOV
+	if self.FOV < 0 then deg_fov = self:GetPlayerOwner():GetFOV() end
 
+	local fov = math.rad(deg_fov)
+	--local v_fov = h_fov
+
+	local up = math.tan(0.5*fov) * scale * ang:Up()
+	local right = math.tan(0.5*fov) * scale * ASPECT_RATIO * ang:Right()
+	local forward = scale * ang:Forward()
+
+	--up side
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward + up, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward + up + right, u = 0, v = 0})
+
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward + up, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward + up - right, u = 0, v = 0})
+
+	--down side
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward - up, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward - up + right, u = 0, v = 0})
+
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward - up, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward - up - right, u = 0, v = 0})
+
+	--left side
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward - right, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward + up - right, u = 0, v = 0})
+
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward - right, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward - up - right, u = 0, v = 0})
+
+	--right side
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward + right, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward + up + right, u = 0, v = 0})
+
+	table.insert(tris, verttip)
+	table.insert(tris, {pos = pos + forward + right, u = 0, v = 0})
+	table.insert(tris, {pos = pos + forward - up + right, u = 0, v = 0})
+
+	obj:BuildFromTriangles( tris )
+end
+
+function PART:OnThink()
+
+	local owner = self:GetPlayerOwner()
+	local eyeang = owner:EyeAngles()
+
+	local pos, ang = self:GetDrawPosition(nil, true)
+	ang = LerpAngle(self.EyeAnglesLerp, ang, eyeang)
+
+	if self.RT then
+		-- Start drawing onto our render target
+		render.PushRenderTarget( self.render_target )
+			render.Clear( 0, 0, 0, 200, true, true )
+			cam.Start3D( 
+				pos, ang, self.FOV, 0, 0, 512, 512
+			)
+				render.RenderView({
+					origin = pos,
+					angles = ang,
+					drawviewmodel = false,
+					x = 0,
+					y = 0,
+					w = 512,
+					h = 512,
+					viewid = 2,
+					fov = self.FOV,
+					znear = (self.NearZ == -1 and 1 or self.NearZ), zfar = (self.FarZ == -1 and 20000 or self.FarZ)
+				})
+			cam.End3D()
+		render.PopRenderTarget()
+		hook.Add( "HUDPaint", "ExampleDraw", function()
+			surface.SetDrawColor( 255, 255, 255, 255 )
+			surface.SetMaterial( self.render_target_mat )
+			surface.DrawTexturedRect( ScrW()-512, 0, 256,256 )
+		end )
+	else
+		hook.Remove( "HUDPaint", "ExampleDraw")
+	end
+	if self:GetPlayerOwner() == pac.LocalPlayer then
+		if self == pace.current_part then
+			if not self.selected_time then
+				self.selected_time = CurTime()
+				self.cam_preview_remove = CurTime() + 5
+			end
+			pac.AddHook("PostDrawOpaqueRenderables", "camera_preview", function()
+				if not IsValid(self) then pac.RemoveHook("PostDrawOpaqueRenderables", "camera_preview") return end
+				if self:IsHidden() then pac.RemoveHook("PostDrawOpaqueRenderables", "camera_preview") return end
+				if not pace.IsActive() then pac.RemoveHook("PostDrawOpaqueRenderables", "camera_preview") return end
+				local pos, ang = self:GetDrawPosition(nil, true)
+				ang = LerpAngle(self.EyeAnglesLerp, ang, eyeang)
+				render.Model({
+					model = "models/editor/camera.mdl", pos = pos - 11 * ang:Forward(), angle = ang
+				})
+				render.SetMaterial( Material( "models/wireframe" ) )
+				local obj = Mesh()
+				self:BuildFrustrum(obj, pos, ang)
+				
+				local mat = Matrix()
+				cam.PushModelMatrix( mat )
+				render.CullMode(MATERIAL_CULLMODE_CW)
+				obj:Draw()
+				render.CullMode(MATERIAL_CULLMODE_CCW)
+				obj:Draw()
+				cam.PopModelMatrix()
+			end)
+			if not self.Preview then
+				if self.cam_preview_remove < CurTime() then
+					pac.RemoveHook("PostDrawOpaqueRenderables", "camera_preview")
+				end
+			end
+		else
+			self.selected_time = nil
+			if not self.Preview then
+				pac.RemoveHook("PostDrawOpaqueRenderables", "camera_preview")
+			end
+		end
+	end
+end
+function PART:OnSelected()
+	--[[if not self.selected_time then
+		self.selected_time = CurTime()
+		self.cam_preview_remove = CurTime() + 5
+	end
+	pac.AddHook("PostDrawOpaqueRenderables", "camera_preview", function()
+		if not IsValid(self) then pac.RemoveHook("PostDrawOpaqueRenderables", "camera_preview") end
+		local pos, ang = self:GetDrawPosition(nil, true)
+		ang = LerpAngle(self.EyeAnglesLerp, ang, eyeang)
+		render.Model({
+			model = "models/editor/camera.mdl", pos = pos - 11 * ang:Forward(), angle = ang
+		})
+		render.SetMaterial( Material( "models/wireframe" ) )
+		local obj = Mesh()
+		self:BuildFrustrum(obj, pos, ang)
+		
+		local mat = Matrix()
+		cam.PushModelMatrix( mat )
+		render.CullMode(MATERIAL_CULLMODE_CW)
+		obj:Draw()
+		render.CullMode(MATERIAL_CULLMODE_CCW)
+		obj:Draw()
+		cam.PopModelMatrix()
+	end)]]
+end
+
+function PART:GetNiceName()
+	return "camera [FOV:" .. self.FOV .. "]"
+end
+
+function PART:SetFOV(val)
+	self.FOV = val
+	if self.last_fov ~= self.FOV then
+		if IsValid(self.pace_tree_node) then
+			self.pace_tree_node:SetText(self:GetNiceName())
+		end
+	end
+	self.last_fov = self.FOV
+end
 
 function PART:Initialize()
 	if pac.LocalPlayer == self:GetPlayerOwner() then
 		pac.nocams = false
 		pac.client_camera_parts[self.UniqueID] = self
 	end
+	self.render_target = GetRenderTarget( "RT_"..self.UniqueID, 512, 512 )
+	local pre_existing_mat = Material("!RT_"..self.UniqueID)
+	self.render_target_mat = CreateMaterial( "RT_"..self.UniqueID, "UnlitGeneric", {
+		["$basetexture"] = self.render_target:GetName(),
+		["$translucent"] = 1,
+		["$vertexcolor"] = 1
+	} )
+	--print(self.render_target_mat, self.render_target_mat:GetName())
+	--self.render_target_tex = self.render_target_mat:GetTexture()
 end
 
 --[[function PART:OnHide()
@@ -318,6 +500,10 @@ function pac.HandleCameraPart(ply, pos, ang, fov, nearz, farz)
 				if not part.inactive then
 					--calculate values ahead of the return, used as a fallback just in case
 					fpos, fang, ffov, fnearz, ffarz = part:CalcView(_,_,ply:EyeAngles())
+
+					--wouldn't you know... but it's hacky and still jitters just a little bit
+					if part.Hack then fpos = fpos + 1.3 * FrameTime() * part:GetPlayerOwner():GetVelocity() end
+
 					temp.origin = fpos
 					temp.angles = fang
 					temp.fov = ffov
