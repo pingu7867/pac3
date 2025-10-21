@@ -302,6 +302,25 @@ end
 function PART:SetArguments(str)
 	self.already_fixed_args = false
 	self.Arguments = str
+
+	if self.Event == "button" then
+		local ply = self:GetPlayerOwner()
+		local button = string.Split(str, "@@")[1]
+		if ply == pac.LocalPlayer then
+			local tbl = ply.pac_broadcast_buttons
+			if tbl == nil then tbl = {} ply.pac_broadcast_buttons = tbl end
+			if not tbl[button] then
+				local val = pac.key_enums_reverse[button:lower()]
+				if val then
+					net.Start("pac.AllowPlayerButtons")
+					net.WriteUInt(val, 8)
+					net.SendToServer()
+				end
+				tbl[button] = true
+			end
+		end
+	end
+
 	if pace.IsActive() and pac.LocalPlayer == self:GetPlayerOwner() then
 		if not self:GetShowInEditor() then return end
 		pace.PopulateProperties(self)
@@ -314,6 +333,7 @@ function PART:Initialize()
 	self.specialtrackedparts = {}
 	self.ExtraHermites = {}
 	self:GetPlayerOwner().pac_buttons = self:GetPlayerOwner().pac_buttons or {}
+	self:GetPlayerOwner().pac_broadcast_buttons = self:GetPlayerOwner().pac_broadcast_buttons or {}
 	if self:GetPlayerOwner() == LocalPlayer() then
 		timer.Simple(0.2, function()
 			if self.Event == "command" then
@@ -3272,31 +3292,6 @@ do
 			local ply = self:GetPlayerOwner()
 			self.pac_broadcasted_buttons_holduntil = self.pac_broadcasted_buttons_holduntil or {}
 
-			if ply == pac.LocalPlayer then
-				local tbl = ply.pac_broadcast_buttons
-				if tbl == nil then tbl = {} ply.pac_broadcast_buttons = tbl end
-				if not tbl[button] then
-					local val = enums2[button:lower()]
-					if val then
-						net.Start("pac.AllowPlayerButtons")
-						net.WriteUInt(val, 8)
-						net.SendToServer()
-					end
-					tbl[button] = true
-				end
-
-				--[[ply.pac_broadcast_buttons = ply.pac_broadcast_buttons or {}
-				if not ply.pac_broadcast_buttons[button] then
-					local val = enums2[button:lower()]
-					if val then
-						net.Start("pac.AllowPlayerButtons")
-						net.WriteUInt(val, 8)
-						net.SendToServer()
-					end
-					ply.pac_broadcast_buttons[button] = true
-				end]]
-			end
-
 			local buttons = ply.pac_buttons
 
 			self.pac_broadcasted_buttons_holduntil[button] = self.pac_broadcasted_buttons_holduntil[button] or SysTime()
@@ -3715,7 +3710,7 @@ end
 
 local perf_monitor_mode = 0
 local perf_mode = CreateConVar("pac_event_performance_preview_mode", 1, FCVAR_ARCHIVE, "mode to preview event think times")
-cvars.AddChangeCallback("pac_event_performance_preview_mode", function(old, new)
+cvars.AddChangeCallback("pac_event_performance_preview_mode", function(name, old, new)
 	perf_monitor_mode = tonumber(new)
 end)
 perf_monitor_mode = perf_mode:GetInt()
