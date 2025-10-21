@@ -693,7 +693,110 @@ function pace.AddOneDirectorySavedPartsToMenu(menu, subdir, nicename)
 end
 
 function pace.AddSavedPartsToMenu(menu, clear, override_part)
-	menu.GetDeleteSelf = function() return false end
+
+	menu:SetDeleteSelf(false)
+
+	--outfit searching
+	local basepnl = menu:AddOption(L"Search", function()
+		local outfit_searcher_base = vgui.Create("EditablePanel")
+		outfit_searcher_base:SetSize(600, 800)
+		outfit_searcher_base:MakePopup()
+		outfit_searcher_base:SetPos(menu:GetX(), menu:GetY())
+		local edit = outfit_searcher_base:Add("DTextEntry")
+		edit:Dock(TOP)
+		edit:SetTall(20)
+		edit:RequestFocus()
+		edit:SetUpdateOnType(true)
+		local result = outfit_searcher_base:Add("DScrollPanel")
+		result:Dock(FILL)
+
+		local results = {}
+
+		local function Match(dir, filename, keywords)
+			local full_match = false
+			filename = string.lower(filename)
+			dir = string.lower(dir)
+			for i, keyword in ipairs(string.Split(keywords, " ")) do
+				local dirmatch = string.find(dir, string.lower(keyword)) ~= nil
+				local filematch = string.find(filename, string.lower(keyword)) ~= nil
+				if dirmatch or filematch then
+					full_match = true
+				elseif (not filematch and not filematch) then
+					return false
+				end
+			end
+			return full_match
+		end
+
+		local function add_recursive(basetbl, dir)
+			if dir == "pac3/__animations" then return end
+			local files, dirs = file.Find(dir .. "/*", "DATA")
+			for i, filename in ipairs(files) do
+				if string.GetExtensionFromFilename(filename) == "txt" then
+					table.insert(basetbl, {filename = filename, dir = dir:sub(6)})
+				end
+			end
+
+			for i, dir2 in ipairs(dirs) do
+				add_recursive(basetbl, dir .. "/" .. dir2)
+			end
+		end
+
+		function edit:OnValueChange(str)
+			result:Clear()
+			results = {}
+			local all_files = {}
+			add_recursive(all_files, "pac3")
+			for i,v in ipairs(all_files) do
+				if Match(v.dir, v.filename, str) then
+					--print(i, v.filename, v.dir)
+					table.insert(results, v)
+					local line = result:Add("DButton")
+					line:SetText("")
+					line:SetTall(20)
+					local btn = line:Add("DImageButton")
+					btn:SetSize(16, 16)
+					btn:SetPos(4,0)
+					btn:SetMouseInputEnabled(false)
+					btn:SetIcon("icon16/group.png")
+					local label = line:Add("DLabel")
+					label:SetTextColor(label:GetSkin().Colours.Category.Line.Text)
+					label:SetText("[" .. i .. "] " .. v.dir .. "/" .. v.filename)
+					line.label = label
+					
+					label:SetMouseInputEnabled(false)
+					label:SetSize(584,16)
+					label:SetPos(24,0)
+
+					line.DoClick = function()
+						pace.LoadParts(v.dir .. "/" .. v.filename .. ".txt", clear, override_part)
+						outfit_searcher_base:Remove()
+					end
+					v.line = line
+
+					line:Dock(TOP)
+				end
+			end
+		end
+
+		function edit:OnEnter()
+			if results[1] then
+				results[1].line:DoClick()
+			end
+		end
+		edit:OnValueChange("")
+
+		pac.AddHook("VGUIMousePressed", "search_outfits_menu", function(pnl, code)
+			if not IsValid(outfit_searcher_base) then pac.RemoveHook("VGUIMousePressed", "search_outfits_menu") return end
+			if code == MOUSE_LEFT or code == MOUSE_RIGHT then
+				if not outfit_searcher_base:IsOurChild(pnl) then
+					outfit_searcher_base:Remove()
+					pac.RemoveHook("VGUIMousePressed", "search_outfits_menu")
+				end
+			end
+		end)
+	end) basepnl:SetImage("icon16/zoom.png")
+
 
 	menu:AddOption(L"load from url", function()
 		Derma_StringRequest(
@@ -714,7 +817,7 @@ function pace.AddSavedPartsToMenu(menu, clear, override_part)
 			"",
 
 			function(name)
-				local data, _ = pace.luadata.Decode(name)
+				local data,err = pace.luadata.Decode(name)
 				if data then
 					pace.LoadPartsFromTable(data, clear, override_part)
 				end
@@ -725,10 +828,10 @@ function pace.AddSavedPartsToMenu(menu, clear, override_part)
 	if not override_part and pace.example_outfits then
 		local examples, pnl = menu:AddSubMenu(L"examples")
 		pnl:SetImage(pace.MiscIcons.help)
-		examples.GetDeleteSelf = function() return false end
+		examples:SetDeleteSelf(false)
 
 		local sorted = {}
-		for k, v in pairs(pace.example_outfits) do sorted[#sorted + 1] = {k = k, v = v} end
+		for k,v in pairs(pace.example_outfits) do sorted[#sorted + 1] = {k = k, v = v} end
 		table.sort(sorted, function(a, b) return a.k < b.k end)
 
 		for _, data in pairs(sorted) do
@@ -738,15 +841,20 @@ function pace.AddSavedPartsToMenu(menu, clear, override_part)
 	end
 
 	menu:AddSpacer()
-
-	local tbl = pace.GetSavedParts()
-	populate_parts(menu, tbl, override_part, clear)
+	local tbl = {}
+	if lazy_mode:GetBool() then
+		tbl = pace.GetSavedOutfits()
+		populate_outfits(menu, tbl, "pac3", override_part, clear)
+	else
+		tbl = pace.GetSavedParts()
+		populate_parts(menu, tbl, override_part, clear)
+	end
 
 	menu:AddSpacer()
 
 	local backups, pnl = menu:AddSubMenu(L"backups")
 	pnl:SetImage(pace.MiscIcons.clone)
-	backups.GetDeleteSelf = function() return false end
+	backups:SetDeleteSelf(false)
 
 	local subdir = "pac3/__backup/*"
 
@@ -774,7 +882,7 @@ function pace.AddSavedPartsToMenu(menu, clear, override_part)
 
 	local backups, pnl = menu:AddSubMenu(L"outfit backups")
 	pnl:SetImage(pace.MiscIcons.clone)
-	backups.GetDeleteSelf = function() return false end
+	backups:SetDeleteSelf(false)
 
 	subdir = "pac3/__backup_save/*"
 	add_expensive_submenu_load(pnl, function()
