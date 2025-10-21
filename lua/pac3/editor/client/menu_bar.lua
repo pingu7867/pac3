@@ -65,6 +65,33 @@ local function populate_pac(menu)
 	menu:AddSpacer()
 
 	do
+		local performance, icon = menu:AddSubMenu(L"performance", function() end)
+		icon:SetImage("icon16/chart_pie.png")
+		performance:SetDeleteSelf(false)
+		local perf_knowledge, icon = performance:AddSubMenu(L"how performance works", function() end)
+			perf_knowledge:SetDeleteSelf(false)
+			perf_knowledge:AddOption("FPS is the inverse of drawtime. THIS MEANS DIMINISHING RETURNS")
+			perf_knowledge:AddOption("1 / t = FPS")
+			perf_knowledge:AddOption("e.g. 50 fps = 1 / 0.02 s")
+			perf_knowledge:AddOption("at 100 fps (10 ms), 2 extra milliseconds means -17 fps")
+			perf_knowledge:AddOption("at 50 fps (20 ms), 2 extra milliseconds means -5 fps")
+			perf_knowledge:AddOption("therefore, it's no use 'optimizing' an already-bloated outfit. you must remove stuff in bulk and rework your design.")
+			perf_knowledge:AddOption("not all parts have the same cost per unit. events, proxies and models are common heavyweights")
+			perf_knowledge:AddOption("At a part level, we shall commonly use μs / us, microseconds (0.001 milliseconds), as a convenient macro unit")
+			perf_knowledge:AddOption("At an outfit level, we shall commonly use milliseconds instead. you'll get a feel eventually as you test your outfits")
+
+		performance:AddOption(L"visualize render times (outfit-level)", pac.VisualiseRenderTimes):SetImage("icon16/chart_bar.png")
+		performance:AddOption(L"visualize render times (per class)", pac.VisualiseRenderTimesPerClass):SetImage("icon16/chart_bar.png")
+
+		performance:AddOption("event performance preview", function()
+			Derma_StringRequest("select mode", "0-3\n0 : none\n1 : trigger events\n2 : internal event computation\n3 : think time", GetConVar("pac_event_performance_preview_mode"):GetString(), function(str)
+				GetConVar("pac_event_performance_preview_mode"):SetString(str)
+			end)
+		end):SetIcon("icon16/clock_red.png")
+
+	end
+
+	do
 		local help, help_pnl = menu:AddSubMenu(L"help", function() pace.ShowWiki() end)
 		help.GetDeleteSelf = function() return false end
 		help_pnl:SetImage(pace.MiscIcons.help)
@@ -259,6 +286,7 @@ local function populate_view(menu)
 	menu:AddOption(L"reset view position", function() pace.ResetView() end):SetImage("icon16/camera_link.png")
 	menu:AddOption(L"reset zoom", function() pace.ResetZoom() end):SetImage("icon16/magnifier.png")
 	menu:AddOption(L"visualize render times", pac.VisualiseRenderTimes):SetImage("icon16/chart_bar.png")
+	menu:AddOption(L"visualize render times (per class)", pac.VisualiseRenderTimesPerClass):SetImage("icon16/chart_bar.png")
 end
 
 local function populate_options(menu)

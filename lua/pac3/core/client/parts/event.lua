@@ -313,6 +313,7 @@ function PART:Initialize()
 	self.found_cached_parts = {}
 	self.specialtrackedparts = {}
 	self.ExtraHermites = {}
+	self:GetPlayerOwner().pac_buttons = self:GetPlayerOwner().pac_buttons or {}
 	if self:GetPlayerOwner() == LocalPlayer() then
 		timer.Simple(0.2, function()
 			if self.Event == "command" then
@@ -1984,6 +1985,7 @@ PART.OldEvents = {
 			local ply = self:GetPlayerOwner()
 
 			if self.Operator == "equal" then
+				--an early return saves microseconds when having lots of pac_events on default buttons
 				if ply.pac_command_events and ply.pac_command_events[find] then
 					local found = nil
 					if ply.pac_command_events[find].on > 0 then
@@ -3256,6 +3258,13 @@ do
 			return self:GetOperator() .. " \"" .. button .. "\"" .. " in (" .. active .. ")"
 		end,
 		callback = function(self, ent, button, holdtime, toggle, ignore_if_hidden)
+			if not toggle and holdtime == 0 then
+				--an early return saves almost 1 microsecond on default buttons
+				--if self:GetPlayerOwner().pac_buttons then
+					return self:GetPlayerOwner().pac_buttons[button]
+				--end
+			end
+
 			self.holdtime = holdtime or 0
 			local toggle = toggle or false
 			self.togglestate = self.togglestate or false
@@ -3264,7 +3273,19 @@ do
 			self.pac_broadcasted_buttons_holduntil = self.pac_broadcasted_buttons_holduntil or {}
 
 			if ply == pac.LocalPlayer then
-				ply.pac_broadcast_buttons = ply.pac_broadcast_buttons or {}
+				local tbl = ply.pac_broadcast_buttons
+				if tbl == nil then tbl = {} ply.pac_broadcast_buttons = tbl end
+				if not tbl[button] then
+					local val = enums2[button:lower()]
+					if val then
+						net.Start("pac.AllowPlayerButtons")
+						net.WriteUInt(val, 8)
+						net.SendToServer()
+					end
+					tbl[button] = true
+				end
+
+				--[[ply.pac_broadcast_buttons = ply.pac_broadcast_buttons or {}
 				if not ply.pac_broadcast_buttons[button] then
 					local val = enums2[button:lower()]
 					if val then
@@ -3273,7 +3294,7 @@ do
 						net.SendToServer()
 					end
 					ply.pac_broadcast_buttons[button] = true
-				end
+				end]]
 			end
 
 			local buttons = ply.pac_buttons
@@ -3692,24 +3713,47 @@ function PART:GetTargetingModePrefix()
 	return "[" .. table.concat(modes, " ") .. "] "
 end
 
+local perf_monitor_mode = 0
+local perf_mode = CreateConVar("pac_event_performance_preview_mode", 1, FCVAR_ARCHIVE, "mode to preview event think times")
+cvars.AddChangeCallback("pac_event_performance_preview_mode", function(old, new)
+	perf_monitor_mode = tonumber(new)
+end)
+perf_monitor_mode = perf_mode:GetInt()
 function PART:GetNiceName()
 	local event_name = self:GetEvent()
 
 	if not PART.Events[event_name] then return "unknown event" end
 	self.trigtime = self.trigtime or 0
+	self.event_computetime = self.event_computetime or 0
 	local trigtime_avg = self.trigtime
-	self.trigtime_avgs = self.trigtime_avgs or {}
-	table.insert(self.trigtime_avgs, self.trigtime)
-	if #self.trigtime_avgs >= 100 then
-		table.remove(self.trigtime_avgs,1)
-		local sum = 0
-		for i=1,99 do
-			sum = sum + self.trigtime_avgs[i]
+
+	if perf_monitor_mode ~= 0 then
+		self.trigtime_avgs = self.trigtime_avgs or {}
+		local tbl = self.trigtime_avgs
+
+		--3 performance monitorings
+		if perf_monitor_mode == 1 then --TriggerEvent is where it goes through its targets
+			table.insert(self.trigtime_avgs, self.trigtime)
+		elseif perf_monitor_mode == 2 then --internal event condition calculation time, to compare different events, the impact of operators etc.
+			table.insert(tbl, self.event_computetime)
+		elseif perf_monitor_mode == 3 then --thinktime has both combined
+			table.insert(tbl, self.event_thinktime)
 		end
-		trigtime_avg = sum / 99
+
+		if #tbl >= 100 then
+			table.remove(tbl,1)
+			local sum = 0
+			local stime = SysTime()
+			for i=1,99 do
+				sum = sum + tbl[i]
+			end
+			trigtime_avg = sum / 99
+		end
+		return string.format("%f", trigtime_avg):sub(1,4)  .. " : " .. self:GetTargetingModePrefix() .. (PART.Events[event_name]:GetNiceName(self, get_owner(self)) or "")
+
 	end
-	
-	return string.format("%f", trigtime_avg):sub(1,4)  .. " : " .. self:GetTargetingModePrefix() .. (PART.Events[event_name]:GetNiceName(self, get_owner(self)) or "")
+
+	return self:GetTargetingModePrefix() .. (PART.Events[event_name]:GetNiceName(self, get_owner(self)) or "")
 end
 
 local function is_hidden_by_something_else(part, ignored_part)
@@ -3837,6 +3881,9 @@ function PART:fix_args()
 end
 
 function PART:OnThink()
+	local t_stime = SysTime()
+	--possible optimization (destructive): randomly drop some event updates
+	--if math.random() > 1 then self.event_thinktime = 0 return end
 	local ent = get_owner(self)
 	if not ent:IsValid() then return end
 
@@ -3845,8 +3892,14 @@ function PART:OnThink()
 	if not data then return end
 
 	if not self.already_fixed_args then self:fix_args() end
-	self:TriggerEvent(should_trigger(self, ent, data))
+	local stime = SysTime()
+	local b = should_trigger(self, ent, data)
+	self.event_computetime = 1000000 * (SysTime() - stime)
 
+	if self.previous_trig ~= b then
+		self:TriggerEvent(b)
+	end
+	self.event_thinktime = 1000000 * (SysTime() - t_stime)
 	--[[if pace and pace.IsActive() and self.Name == "" then
 		if self.pace_properties and self.pace_properties["Name"] and self.pace_properties["Name"]:IsValid() then
 			self.pace_properties["Name"]:SetText(self:GetNiceName())

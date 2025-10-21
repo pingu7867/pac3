@@ -15,6 +15,9 @@ local util_QuickTrace = util.QuickTrace
 local pac = pac
 local pac_isCameraAllowed = pac.CreateClientConVarFast("pac_enable_camera_as_bone", "1", true, "boolean")
 
+local allow_NL = GetConVar("pac_sv_nearest_life")
+local allow_NL_bone = GetConVar("pac_sv_nearest_life_allow_bones")
+
 pac.BoneNameReplacements =
 {
 	{"Anim_Attachment", "attach"},
@@ -187,6 +190,17 @@ local function GetBonePosition(ent, id)
 	if not mat then return end
 
 	local pos, ang = mat:GetTranslation(), mat:GetAngles()
+	--local pos, ang = ent:GetBonePosition(id)
+	--if not pos then return end
+	--[[local stime = SysTime()
+	if ent:GetClass() == "gmod_hands" then
+		local delta = SysTime() - stime
+		print(FrameNumber(), ent, 1000000*delta .. " us")
+		pos, ang = ent:GetBonePosition(id)
+	else
+		local delta = SysTime() - stime
+		print(FrameNumber(), ent.PACPart, 1000000*delta .. " us")
+	end]]
 
 	if ang.p ~= ang.p then ang.p = 0 end
 	if ang.y ~= ang.y then ang.y = 0 end
@@ -313,6 +327,11 @@ function pac.GetBonePosAng(ent, id, parent)
 
 			return res.HitPos, ent:EyeAngles()
 		end
+	elseif id == "hitpos_world_nolife" then
+		local res = util_QuickTrace(ent:EyePos(), ent:EyeAngles():Forward() * 16000, function(ent)
+			return not (ent:IsNPC() or ent:IsPlayer() or ent:IsNextBot())
+		end)
+		return res.HitPos, res.HitNormal:Angle()
 	elseif id == "footstep" then
 		if ent.pac_last_footstep_pos then
 			return ent.pac_last_footstep_pos, UP
@@ -327,6 +346,38 @@ function pac.GetBonePosAng(ent, id, parent)
 		local bpos, bang = pac.GetBonePosAng(ent, "right calf", parent)
 
 		return LerpVector(0.5, apos, bpos), LerpAngle(0.5, aang, bang)
+	elseif pac.StringFind(id, "NEAREST_LIFE", true, true) then
+		if not allow_NL:GetBool() then return ent:GetPos(), ent:GetAngles() end
+		if not allow_NL_bone:GetBool() then return ent:GetPos(), ent:GetAngles() end
+
+		local part = pac.bone_requesting_part
+		if not part.nearest_life_bone_params then return ent:GetPos(), ent:GetAngles() end
+
+		local parent2 = part:GetParent()
+		if not parent2.GetWorldPosition then parent2 = part:GetRootPart():GetOwner() end
+
+		local wpos = part:GetOwner():GetPos()
+		local ent2 = pac.FindNearestLifeEntity(part, part.nearest_life_bone_params, wpos, parent2)
+		part.fallback_nearest_life_ent = ent2 or part.fallback_nearest_life_ent
+		ent2 = part.fallback_nearest_life_ent
+
+		if not ent2 then return ent:GetPos(), ent:GetAngles() end
+
+		local pos = pac.GetNearestLifeResultingPosition(part, part.nearest_life_bone_params, ent2)
+		local ang = angle_origin
+		if part.nearest_life_bone_params.bone_ang then
+			if part.nearest_life_bone_params.bone_ang == "entyaw" then
+				ang = ent2:GetAngles()
+				ang.p = 0
+				ang.r = 0
+			elseif part.nearest_life_bone_params.bone_ang == "owner" then
+				ang = (ent:GetPos() - ent2:GetPos()):Angle()
+			elseif part.nearest_life_bone_params.bone_ang == "owneryaw" then
+				ang = (ent:GetPos() - ent2:GetPos()):Angle()
+				ang.p = 0
+			end
+		end
+		return pos, ang
 	end
 
 	local pos, ang
