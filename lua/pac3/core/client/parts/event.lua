@@ -303,24 +303,6 @@ function PART:SetArguments(str)
 	self.already_fixed_args = false
 	self.Arguments = str
 
-	if self.Event == "button" then
-		local ply = self:GetPlayerOwner()
-		local button = string.Split(str, "@@")[1]
-		if ply == pac.LocalPlayer then
-			local tbl = ply.pac_broadcast_buttons
-			if tbl == nil then tbl = {} ply.pac_broadcast_buttons = tbl end
-			if not tbl[button] then
-				local val = pac.key_enums_reverse[button:lower()]
-				if val then
-					net.Start("pac.AllowPlayerButtons")
-					net.WriteUInt(val, 8)
-					net.SendToServer()
-				end
-				tbl[button] = true
-			end
-		end
-	end
-
 	if pace.IsActive() and pac.LocalPlayer == self:GetPlayerOwner() then
 		if not self:GetShowInEditor() then return end
 		pace.PopulateProperties(self)
@@ -3278,18 +3260,29 @@ do
 			return self:GetOperator() .. " \"" .. button .. "\"" .. " in (" .. active .. ")"
 		end,
 		callback = function(self, ent, button, holdtime, toggle, ignore_if_hidden)
+			local ply = self:GetPlayerOwner()
+			if ply == LocalPlayer() then
+				local tbl = ply.pac_broadcast_buttons
+				if tbl == nil then tbl = {} ply.pac_broadcast_buttons = tbl end
+				if not tbl[button] then
+					local val = pac.key_enums_reverse[button:lower()]
+					if val then
+						net.Start("pac.AllowPlayerButtons")
+						net.WriteUInt(val, 8)
+						net.SendToServer()
+					end
+					tbl[button] = true
+				end
+			end
 			if not toggle and holdtime == 0 then
 				--an early return saves almost 1 microsecond on default buttons
-				--if self:GetPlayerOwner().pac_buttons then
-					return self:GetPlayerOwner().pac_buttons[button]
-				--end
+				return self:GetPlayerOwner().pac_buttons[button]
 			end
 
 			self.holdtime = holdtime or 0
 			local toggle = toggle or false
 			self.togglestate = self.togglestate or false
 
-			local ply = self:GetPlayerOwner()
 			self.pac_broadcasted_buttons_holduntil = self.pac_broadcasted_buttons_holduntil or {}
 
 			local buttons = ply.pac_buttons

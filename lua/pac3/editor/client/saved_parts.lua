@@ -156,18 +156,34 @@ end
 local latestprop
 local latest_uid
 if game.SinglePlayer() then
+	LocalPlayer().pac_propload_queuedparts = {}
+	function pac.wearqueue(ply, ent)
+		if ent:EntIndex() <= 0 then return end
+		if not IsValid(ply) then return end
+		if not IsValid(ent) then return end
+		if not ply.pac_propload_queuedparts then return end
+		if table.IsEmpty(ply.pac_propload_queuedparts) then return end
+		ent:EmitSound( "buttons/button4.wav" )
+		local root = ply.pac_propload_queuedparts[1]
+		root.self.OwnerName = ent:EntIndex()
+		latest_uid = tostring(root.self.UniqueID)
+		pace.LoadPartsFromTable(root, false, false)
+		table.remove(ply.pac_propload_queuedparts,1)
+		latestprop = ent
+		--[[if table.IsEmpty(ply.pac_propload_queuedparts) then
+			net.Start("pac_demand_prop_spawn")
+			net.WriteBool(GetConVar("pac_spawnmenu_props_spawn_as_parts"):GetBool())
+			net.SendToServer()
+		end]]
+	end
+	--[[net.Receive("pac_entity_created_for_singleplayer", function(len)
+		local ent = net.ReadEntity()
+		local ply = net.ReadEntity()
+		--pac.wearqueue(LocalPlayer(), ent)
+	end)]] 
 	pac.AddHook("OnEntityCreated", "queue_proppacs", function( ent )
-		if ( ent:GetClass() == "prop_physics" or ent:IsNPC()) and not ent:CreatedByMap() and LocalPlayer().pac_propload_queuedparts then
-			if not table.IsEmpty(LocalPlayer().pac_propload_queuedparts) then
-				ent:EmitSound( "buttons/button4.wav" )
-				local root = LocalPlayer().pac_propload_queuedparts[next(LocalPlayer().pac_propload_queuedparts)]
-				root.self.OwnerName = ent:EntIndex()
-				latest_uid = root.self.UniqueID
-				pace.LoadPartsFromTable(root, false, false)
-				LocalPlayer().pac_propload_queuedparts[next(LocalPlayer().pac_propload_queuedparts)] = nil
-				latestprop = ent
-			end
-
+		if not ent:CreatedByMap() and LocalPlayer().pac_propload_queuedparts then
+			pac.wearqueue(LocalPlayer(), ent)
 		end
 	end)
 end
