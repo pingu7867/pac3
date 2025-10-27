@@ -171,7 +171,7 @@ pac.AddHook("DrawOverlay", "backup_cursor_info", function()
 	local base_y = my + 8
 
 	surface.SetFont("BudgetLabel")
-	surface.SetDrawColor(Color(255,255,255, faded_a))
+	surface.SetDrawColor(255,255,255, faded_a)
 	surface.SetMaterial(Material("icon16/group_add.png"))
 	surface.DrawTexturedRect(mx + 10, base_y, 16, 16)
 	draw.DrawText(
@@ -208,7 +208,7 @@ pac.AddHook("DrawOverlay", "backup_editor_notification", function()
 	local x = pace.Editor:IsLeft() and (pace.Editor:GetPos() + pace.Editor:GetWide()) or pace.Editor:GetPos() - 300
 
 	surface.SetFont("BudgetLabel")
-	surface.SetDrawColor(Color(255,255,255, faded_a))
+	surface.SetDrawColor(255,255,255, faded_a)
 	surface.SetMaterial(Material(pace.MiscIcons.save))
 	surface.DrawTexturedRect(x + 10, y, 16, 16)
 	draw.DrawText(
@@ -311,7 +311,7 @@ function pace.LoadParts(name, clear, override_part)
 			local function callback(str)
 				if string.find( str, "<!DOCTYPE html>" ) then
 					pace.MessagePrompt("Invalid URL, .txt expected, but the website returned a HTML file. If you're using Github then use the RAW option.", "URL Failed", "OK")
-						return
+					return
 				end
 
 				local data, err = pace.luadata.Decode(str)
@@ -547,7 +547,7 @@ local function get_name(part)
 	end
 	return name
 end
-local function get_icon(part)
+function pac.GetPartIcon(part)
 	if part.ClassName == "model2" or part.ClassName == "entity2" then
 		if part.Model ~= "" then
 			if file.Exists("materials/spawnicons/"..string.gsub(part.Model, ".mdl", "")..".png", "GAME") then
@@ -586,7 +586,7 @@ end
 
 local function populate_part(menu, part, override_part, clear)
 	local name = get_name(part.self)
-	local icon = get_icon(part)
+	local icon = pac.GetPartIcon(part)
 
 	if #part.children > 0 then
 		local menu, pnl = menu:AddSubMenu("[" .. #part.children .."] " .. name, function()
@@ -972,6 +972,9 @@ function pace.AddSavedPartsToMenu(menu, clear, override_part)
 			:SetImage(pace.MiscIcons.outfit)
 		end
 	end
+
+	menu:AddCVar("lazy mode", "pac_load_lazymode", "1", "0", function() menu:Clear() pace.AddSavedPartsToMenu(menu, clear, override_part) end)
+	menu:AddCVar("compact mode", "pac_load_compactmode", "1", "0", function() menu:Clear() pace.AddSavedPartsToMenu(menu, clear, override_part) end)
 
 	menu:AddSpacer()
 	local tbl = {}
