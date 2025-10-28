@@ -164,6 +164,7 @@ pac.AddHook("DrawOverlay", "backup_cursor_info", function()
 	if backup_notify_mode:GetInt() == 1 or backup_notify_mode:GetInt() == 0 then return end
 	if not pace then return end
 	if not pace.IsFocused() then return end
+	if not pace.IsActive() then return end
 	if not pace.backup_notification_lines then return end
 	local mx, my = input.GetCursorPos()
 
@@ -201,6 +202,7 @@ pac.AddHook("DrawOverlay", "backup_editor_notification", function()
 	if backup_notify_mode:GetInt() == 0 or backup_notify_mode:GetInt() == 2 then return end
 	if not pace then return end
 	if not pace.IsFocused() then return end
+	if not pace.IsActive() then return end
 	if not pace.backup_notification_lines then return end
 
 	local faded_a = 255*math.Clamp(2 - (CurTime() - pace.backup_notification_lines.notify_time),0,1)
@@ -586,7 +588,7 @@ end
 
 local function populate_part(menu, part, override_part, clear)
 	local name = get_name(part.self)
-	local icon = pac.GetPartIcon(part)
+	local icon = pac.GetPartIcon(part.self)
 
 	if #part.children > 0 then
 		local menu, pnl = menu:AddSubMenu("[" .. #part.children .."] " .. name, function()

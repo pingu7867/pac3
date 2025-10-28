@@ -582,6 +582,28 @@ do -- scene graph
 		end
 	end
 
+	function PART:ExpandParents()
+		if self == self:GetRootPart() then return end
+		local parent = self:GetParent()
+		while (parent:HasParent()) do
+			parent:SetEditorExpand(true)
+			parent = parent:GetParent()
+		end
+		self:GetRootPart():SetEditorExpand(true)
+	end
+
+	function PART:TreeScrollTo()
+		if not self.pace_tree_node then
+			self:ExpandParents()
+			timer.Simple(0.3, function()
+				self.pace_tree_node:GetParentNode():ScrollToChild(self.pace_tree_node)
+			end)
+			return
+		end
+		self.pace_tree_node:GetParentNode():ScrollToChild(self.pace_tree_node)
+		--self.pace_tree_node:GetParentNode():ScrollToChild(self.pace_tree_node)
+	end
+
 	function PART:SetSmallIcon(str)
 		if str == "event" then str = "icon16/clock_red.png" end
 		if self.pace_tree_node then

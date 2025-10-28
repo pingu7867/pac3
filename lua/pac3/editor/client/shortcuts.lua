@@ -72,7 +72,9 @@ pace.PACActionShortcut_Dictionary = {
 	"bulk_morph",
 	"criteria_process",
 	"toggle_pins",
-	"cycle_gizmo"
+	"cycle_gizmo",
+	"select_next",
+	"select_previous",
 }
 
 pace.PACActionShortcut_Default = {
@@ -806,6 +808,12 @@ function pace.DoShortcutFunc(action)
 
 	if action == "cycle_gizmo" then
 		pace.angle_gizmo_render = (pace.angle_gizmo_render+1) % 4
+	end
+
+	if action == "select_next" then
+		pace.OnPartSelected(pace.current_part, true, "next")
+	elseif action == "select_previous" then
+		pace.OnPartSelected(pace.current_part, true, "previous")
 	end
 end
 

@@ -417,61 +417,64 @@ pac.AddHook("VGUIMousePressed", "kecode_tracker", function(pnl, mc)
 	pace.last_mouse_code = mc
 end)
 
-function pace.OnPartSelected(part, is_selecting)
-	pace.delaybulkselect = pace.delaybulkselect or 0 --a time updated in shortcuts.lua to prevent common pac operations from triggering bulk selection
-	local bulk_key_pressed = input.IsKeyDown(input.GetKeyCode(GetConVar("pac_bulk_select_key"):GetString()))
 
-	if (not bulk_key_pressed) and bulk_select_deselect:GetBool() and not IsValid(pace.bulk_apply_properties_active) then
-		if pace.last_mouse_code == MOUSE_LEFT then pace.ClearBulkList(true) end
-	end
+function pace.OnPartSelected(part, is_selecting, history_navigation)
+	if not history_navigation then
+		pace.delaybulkselect = pace.delaybulkselect or 0 --a time updated in shortcuts.lua to prevent common pac operations from triggering bulk selection
+		local bulk_key_pressed = input.IsKeyDown(input.GetKeyCode(GetConVar("pac_bulk_select_key"):GetString()))
 
-	if RealTime() > pace.delaybulkselect and bulk_key_pressed and not input.IsKeyDown(input.GetKeyCode("v")) and not input.IsKeyDown(input.GetKeyCode("z")) and not input.IsKeyDown(input.GetKeyCode("y")) then
-		--jumping multi-select if holding shift + ctrl
-		if bulk_key_pressed and input.IsShiftDown() then
-			--ripped some local functions from tree.lua
-			local added_nodes = {}
-			for i,v in ipairs(pace.tree.added_nodes) do
-				if v.part and v:IsVisible() and v:IsExpanded() then
-					table.insert(added_nodes, v)
-				end
-			end
-
-			local startnodenumber = table.KeyFromValue( added_nodes, pace.current_part.pace_tree_node)
-			local endnodenumber = table.KeyFromValue( added_nodes, part.pace_tree_node)
-
-			if not startnodenumber or not endnodenumber then return end
-
-			table.sort(added_nodes, function(a, b) return select(2, a:LocalToScreen()) < select(2, b:LocalToScreen()) end)
-
-			local i = startnodenumber
-
-			local direction = math.Clamp(endnodenumber - startnodenumber,-1,1)
-			if direction == 0 then last_direction = direction return end
-			last_direction = last_direction or 0
-			if last_span_select_part == nil then last_span_select_part = part end
-
-			if last_select_was_span then
-				if last_direction == -direction then
-					pace.DoBulkSelect(pace.current_part, true)
-				end
-				if last_span_select_part == pace.current_part then
-					pace.DoBulkSelect(pace.current_part, true)
-				end
-			end
-			while (i ~= endnodenumber) do
-				pace.DoBulkSelect(added_nodes[i].part, true)
-				i = i + direction
-			end
-			pace.DoBulkSelect(part)
-			last_direction = direction
-			last_select_was_span = true
-		else
-			pace.DoBulkSelect(part)
-			last_select_was_span = false
+		if (not bulk_key_pressed) and bulk_select_deselect:GetBool() and not IsValid(pace.bulk_apply_properties_active) then
+			if pace.last_mouse_code == MOUSE_LEFT then pace.ClearBulkList(true) end
 		end
 
-	else last_select_was_span = false end
-	last_span_select_part = part
+		if RealTime() > pace.delaybulkselect and bulk_key_pressed and not input.IsKeyDown(input.GetKeyCode("v")) and not input.IsKeyDown(input.GetKeyCode("z")) and not input.IsKeyDown(input.GetKeyCode("y")) then
+			--jumping multi-select if holding shift + ctrl
+			if bulk_key_pressed and input.IsShiftDown() then
+				--ripped some local functions from tree.lua
+				local added_nodes = {}
+				for i,v in ipairs(pace.tree.added_nodes) do
+					if v.part and v:IsVisible() and v:IsExpanded() then
+						table.insert(added_nodes, v)
+					end
+				end
+
+				local startnodenumber = table.KeyFromValue( added_nodes, pace.current_part.pace_tree_node)
+				local endnodenumber = table.KeyFromValue( added_nodes, part.pace_tree_node)
+
+				if not startnodenumber or not endnodenumber then return end
+
+				table.sort(added_nodes, function(a, b) return select(2, a:LocalToScreen()) < select(2, b:LocalToScreen()) end)
+
+				local i = startnodenumber
+
+				local direction = math.Clamp(endnodenumber - startnodenumber,-1,1)
+				if direction == 0 then last_direction = direction return end
+				last_direction = last_direction or 0
+				if last_span_select_part == nil then last_span_select_part = part end
+
+				if last_select_was_span then
+					if last_direction == -direction then
+						pace.DoBulkSelect(pace.current_part, true)
+					end
+					if last_span_select_part == pace.current_part then
+						pace.DoBulkSelect(pace.current_part, true)
+					end
+				end
+				while (i ~= endnodenumber) do
+					pace.DoBulkSelect(added_nodes[i].part, true)
+					i = i + direction
+				end
+				pace.DoBulkSelect(part)
+				last_direction = direction
+				last_select_was_span = true
+			else
+				pace.DoBulkSelect(part)
+				last_select_was_span = false
+			end
+
+		else last_select_was_span = false end
+		last_span_select_part = part
+	end
 
 	local parent = part:GetRootPart()
 	if parent:IsValid() and (parent.OwnerName == "viewmodel" or parent.OwnerName == "hands") then
@@ -482,8 +485,50 @@ function pace.OnPartSelected(part, is_selecting)
 		pace.editing_hands = false
 	end
 
+	pace.current_part_history = pace.current_part_history or {}
+	pace.current_part_history.parts = pace.current_part_history.parts or {}
+	pace.current_part_history.part_uids = pace.current_part_history.part_uids or {}
+	pace.current_part_history.index = pace.current_part_history.index or 1
+	pace.current_part_history.part = pace.current_part_history.part or pace.current_part
+
+	local index = pace.current_part_history.index
+	local parts = pace.current_part_history.parts
+	local uids = pace.current_part_history.part_uids
+
+	if not history_navigation and (pace.current_part ~= part) then
+		if pace.current_part_history.parts[1] == part then
+			pace.OnPartSelected(part, true, 1)
+			return
+		end
+		if #parts >= 25 then
+			table.remove(parts,#parts)
+			table.remove(uids,#uids)
+		end
+		table.insert(parts, 1, part)
+		table.insert(uids, 1, part.UniqueID)
+		pace.current_part_history.index = 1
+		parts[pace.current_part_history.index] = part
+		uids[pace.current_part_history.index] = part.UniqueID
+	end
+	if history_navigation then
+		if history_navigation == "next" then
+			pace.current_part_history.index = math.Clamp(index - 1, 1, #parts)
+		elseif history_navigation == "previous" then
+			pace.current_part_history.index = math.Clamp(index + 1, 1, #parts)
+		elseif isnumber(history_navigation) then
+			pace.current_part_history.index = history_navigation
+			part = parts[history_navigation]
+		end
+		part = parts[pace.current_part_history.index]
+		pace.current_part_history.part = part
+		part:ScrollTo()
+		pace.RefreshTree(true)
+	end
+
 	pace.current_part = part
+
 	if pace.bypass_tree then return end
+	if not part:IsValid() then return end
 
 	pace.PopulateProperties(part)
 	pace.mctrl.SetTarget(part)
@@ -505,6 +550,76 @@ function pace.OnPartSelected(part, is_selecting)
 	end
 
 end
+
+pac.select_history_buttons = pac.select_history_buttons or {}
+pac.AddHook("DrawOverlay", "part_history", function()
+	if not pace then return end
+	local buttons = pac.select_history_buttons
+	if (pace.still_loading_wearing and FrameTime() > 1) or not pace.IsFocused() or not pace.IsActive() or (pace.current_part_history == nil) then
+		for i=1,30 do
+			if not buttons[i] then continue end
+			buttons[i]:Remove()
+			table.remove(buttons,i)
+		end
+		return
+	end
+
+	local x = ScrW() - 300
+	local y = 16
+
+	surface.SetFont("BudgetLabel")
+
+	draw.DrawText(
+		"part select history",
+		"BudgetLabel",
+		x + 12 + 16, y,
+		Color(255,255,255, faded_a)
+	)
+	y = 32
+	for i,uid in ipairs(pace.current_part_history.part_uids) do
+		part = pac.GetPartFromUniqueID(pac.Hash(LocalPlayer()), uid)
+		if not IsValid(part) then
+			continue
+		end
+		
+		if i == pace.current_part_history.index then
+			draw.DrawText(
+				"[" .. i .. "] " .. part:GetName(),
+				"BudgetLabel",
+				x + 12 + 16, y,
+				Color(100,255,100, faded_a)
+			)
+		else
+			draw.DrawText(
+				"[" .. i .. "] " .. part:GetName(),
+				"BudgetLabel",
+				x + 12 + 16, y,
+				Color(255,255,255, faded_a)
+			)
+		end
+		if not IsValid(buttons[i]) then
+			buttons[i] = vgui.Create("DImageButton", vgui.GetWorldPanel())
+			buttons[i].DoClick = function()
+				local part = buttons[i].target
+				pace.OnPartSelected(part, true, i)
+				part:ScrollTo()
+			end
+		end
+		if IsValid(buttons[i]) then
+			buttons[i]:SetName(part:GetName())
+			buttons[i]:SetImage(pac.GetPartIcon(part))
+			buttons[i]:SetSize(16,16) buttons[i]:SetPos(x + 10, y)
+			buttons[i].target = part
+		end
+
+		surface.SetMaterial(Material(pac.GetPartIcon(part)))
+		--surface.DrawTexturedRect(x + 10, y, 16, 16)
+		
+		y = y + 16
+	end
+	
+end)
+
 
 pace.suppress_flashing_property = false
 
@@ -539,7 +654,8 @@ function pace.OnVariableChanged(obj, key, val, not_from_editor)
 	end
 
 	if not not_from_editor then
-		timer.Create("pace_backup", 1, 1, pace.Backup)
+		timer.Create("pace_backup", 3, 1, pace.Backup)
+		timer.Create("pace_backup_collectgarbage", 60, 1, function() collectgarbage("collect") end)
 
 		if not pace.undo_release_varchange then
 			pace.RecordUndoHistory()
