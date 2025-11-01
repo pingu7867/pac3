@@ -412,6 +412,7 @@ function PART:SetMultipleTargetParts(str)
 		end
 		self.ExtraHermites_Property = "MultipleTargetParts"
 	end
+	self:CalculateSchema()
 end
 
 local function get_default(typ)
@@ -3937,6 +3938,7 @@ function PART:SetAffectChildrenOnly(b)
 		end
 	end
 	self.AffectChildrenOnly = b
+	self:CalculateSchema()
 end
 
 function PART:OnRemove()
@@ -3987,7 +3989,7 @@ function PART:TriggerEvent(b)
 		self.previousdestinationpart = self.DestinationPart
 	end
 	if schema[4] then
-		for _,part2 in ipairs(self.MultiTargetPart) do
+		for _,part2 in ipairs(self.MultiTargetPart or {}) do
 			if part2.SetEventTrigger then
 				--local _stime = SysTime()
 				part2:SetEventTrigger(self, b)

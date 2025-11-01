@@ -523,6 +523,9 @@ function pace.OnPartSelected(part, is_selecting, history_navigation)
 		pace.current_part_history.part = part
 		part:ScrollTo()
 		pace.RefreshTree(true)
+	elseif part.ClassName == "timeline_dummy_bone" then
+		table.remove(parts,1)
+		table.remove(uids,1)
 	end
 
 	pace.current_part = part
