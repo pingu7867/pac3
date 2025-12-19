@@ -576,12 +576,18 @@ function pace.OnPartSelected(part, is_selecting, history_navigation)
 
 end
 
+
+local history_enable = CreateClientConVar("pac_editor_part_select_history_enabled", "1", true, "enable part selection history")
+local history_enable_btn = CreateClientConVar("pac_editor_part_select_history_show_move_icon", "1", true, "enable part selection history dragging icon")
+local history_x = CreateClientConVar("pac_editor_part_select_history_x", ScrW() - 300, true, "part selection history x position on screen")
+local history_y = CreateClientConVar("pac_editor_part_select_history_y", 16, true, "part selection history y position on screen")
+
 pac.select_history_buttons = pac.select_history_buttons or {}
 pac.AddHook("DrawOverlay", "part_history", function()
 	if not pace then return end
 	local buttons = pac.select_history_buttons
 	if (pace.still_loading_wearing and FrameTime() > 1) or not pace.IsFocused() or not pace.IsActive() or (pace.current_part_history == nil) or pace.current_part_history_rebuild_buttons then
-		for i=1,30 do
+		for i=0,30 do
 			if not buttons[i] then continue end
 			buttons[i]:Remove()
 			table.remove(buttons,i)
@@ -589,6 +595,7 @@ pac.AddHook("DrawOverlay", "part_history", function()
 		pace.current_part_history_rebuild_buttons = nil
 		return
 	end
+	if not history_enable:GetBool() then return end
 	if not pace.current_part_history.part_uids then return end
 	if FrameTime() > 1 then return end
 	if pace.current_part_history.part_uids[26] then
@@ -598,8 +605,12 @@ pac.AddHook("DrawOverlay", "part_history", function()
 			table.remove(pace.current_part_history.part_uids,26)
 		end
 	end
-	local x = ScrW() - 300
-	local y = 16
+	local x = history_x:GetInt() - 8
+	local base_y = history_y:GetInt()
+	if history_x:GetString() == "editor snap" then
+		x = pace.Editor:GetX() + pace.Editor:GetWide() + 16
+	end
+	local y = base_y
 
 	surface.SetFont("BudgetLabel")
 
@@ -609,7 +620,58 @@ pac.AddHook("DrawOverlay", "part_history", function()
 		x + 12 + 16, y,
 		Color(255,255,255, faded_a)
 	)
-	y = 32
+	y = y + 16
+
+	if not IsValid(buttons[0]) and history_enable_btn:GetBool() then
+		buttons[0] = vgui.Create("DImageButton", vgui.GetWorldPanel())
+		local self = buttons[0]
+		self:SetImage("icon16/arrow_switch.png")
+		self:SetSize(16,16)
+		self:SetPos(x + 8, y - 16)
+		buttons[0].DoClick = function()
+			self.dragging = not self.dragging
+		end
+		buttons[0].DoRightClick = function()
+			local menu = DermaMenu()
+			menu:SetPos(input.GetCursorPos())
+			menu:MakePopup()
+			menu:AddCVar("enable part select history", "pac_editor_part_select_history_enabled", "1", "0")
+			menu:AddCVar("show icon", "pac_editor_part_select_history_show_move_icon", "1", "0")
+			menu:AddOption(history_x:GetString() == "editor snap" and "unsnap from editor" or "snap to editor", function()
+				if history_x:GetString() == "editor snap" then
+					history_x:SetInt(ScrW() - 300)
+				else
+					history_x:SetString("editor snap")
+				end
+			end)
+		end
+		buttons[0].Think = function()
+			if self.dragging then
+				self:SetCursor("sizeall")
+				local mx, my = input.GetCursorPos()
+				history_y:SetInt(my - 8)
+				if mx < pace.Editor:GetX() + pace.Editor:GetWide() + 16 then
+					history_x:SetString("editor snap")
+				else
+					history_x:SetInt(mx - 8)
+				end
+				x = mx - 16
+				y = my + 8
+				self:SetPos(x + 8, y - 16)
+				if input.IsKeyDown(KEY_ESCAPE) then
+					self.dragging = false
+				end
+				for i,uid in ipairs(pace.current_part_history.part_uids) do
+					buttons[i]:SetPos(mx + 10 - 16, my + 16*i - 8)
+				end
+			end
+		end
+	elseif history_enable_btn:GetBool() == false then
+		buttons[0]:Remove()
+	else
+		buttons[0]:SetPos(x + 8, y - 16)
+	end
+
 	for i,uid in ipairs(pace.current_part_history.part_uids) do
 		part = pac.GetPartFromUniqueID(pac.Hash(LocalPlayer()), uid)
 		if not IsValid(part) then
