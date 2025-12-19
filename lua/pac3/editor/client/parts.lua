@@ -5,6 +5,9 @@ local L = pace.LanguageString
 pace.BulkSelectList = {}
 pace.BulkSelectUIDs = {}
 pace.BulkSelectClipboard = {}
+
+pace.current_part_history = {}
+
 local refresh_halo_hook = true
 pace.operations_all_operations = {"wear", "copy", "paste", "cut", "paste_properties", "clone", "spacer", "registered_parts", "save", "load", "remove", "bulk_select", "bulk_apply_properties", "partsize_info", "hide_editor", "expand_all", "collapse_all", "copy_uid", "help_part_info", "reorder_movables", "arraying_menu", "criteria_process", "bulk_morph", "view_goto", "view_lockon", "rename", "showhide", "notes"}
 
@@ -241,6 +244,19 @@ function pace.WearParts(temp_wear_filter)
 		pac.Message(reason or "the server doesn't want you to wear parts for some reason")
 		return
 	end
+
+	if pace.current_part_history then
+		local temp = pace.current_part_history.part_uids
+		pace.current_part_history = nil
+		pace.current_part_history_pause = true
+		timer.Simple(0, function()
+			pace.current_part_history = {}
+			pace.current_part_history.part_uids = temp
+			pace.current_part_history_pause = nil
+			pace.current_part_history_rebuild_buttons = true
+		end)
+	end
+	
 
 	return pace.WearOnServer(temp_wear_filter)
 end
@@ -510,6 +526,12 @@ function pace.OnPartSelected(part, is_selecting, history_navigation)
 		parts[pace.current_part_history.index] = part
 		uids[pace.current_part_history.index] = part.UniqueID
 	end
+
+	if (parts[1] == parts[2]) then
+		table.remove(parts,1)
+		table.remove(uids,1)
+	end
+
 	if history_navigation then
 		if history_navigation == "next" then
 			pace.current_part_history.index = math.Clamp(index - 1, 1, #parts)
@@ -519,7 +541,7 @@ function pace.OnPartSelected(part, is_selecting, history_navigation)
 			pace.current_part_history.index = history_navigation
 			part = parts[history_navigation]
 		end
-		part = parts[pace.current_part_history.index]
+		part = parts[pace.current_part_history.index] or pac.GetPartFromUniqueID(pac.Hash(LocalPlayer()), pace.current_part_history.part_uids[pace.current_part_history.index])
 		pace.current_part_history.part = part
 		part:ScrollTo()
 		pace.RefreshTree(true)
@@ -558,15 +580,24 @@ pac.select_history_buttons = pac.select_history_buttons or {}
 pac.AddHook("DrawOverlay", "part_history", function()
 	if not pace then return end
 	local buttons = pac.select_history_buttons
-	if (pace.still_loading_wearing and FrameTime() > 1) or not pace.IsFocused() or not pace.IsActive() or (pace.current_part_history == nil) then
+	if (pace.still_loading_wearing and FrameTime() > 1) or not pace.IsFocused() or not pace.IsActive() or (pace.current_part_history == nil) or pace.current_part_history_rebuild_buttons then
 		for i=1,30 do
 			if not buttons[i] then continue end
 			buttons[i]:Remove()
 			table.remove(buttons,i)
 		end
+		pace.current_part_history_rebuild_buttons = nil
 		return
 	end
-
+	if not pace.current_part_history.part_uids then return end
+	if FrameTime() > 1 then return end
+	if pace.current_part_history.part_uids[26] then
+		if buttons[26] and buttons[26]:IsValid() then
+			buttons[26]:Remove()
+			table.remove(buttons,26)
+			table.remove(pace.current_part_history.part_uids,26)
+		end
+	end
 	local x = ScrW() - 300
 	local y = 16
 
@@ -610,7 +641,7 @@ pac.AddHook("DrawOverlay", "part_history", function()
 		end
 		if IsValid(buttons[i]) then
 			buttons[i]:SetName(part:GetName())
-			buttons[i]:SetImage(pac.GetPartIcon(part))
+			buttons[i]:SetImage(pac.GetPartIcon(part) or "")
 			buttons[i]:SetSize(16,16) buttons[i]:SetPos(x + 10, y)
 			buttons[i].target = part
 		end
