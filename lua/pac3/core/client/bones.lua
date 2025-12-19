@@ -115,6 +115,7 @@ function pac.GetAllBones(ent)
 		tbl.hitpos_world_noang = {friendly = "hitpos_world_noang", is_special = true}
 		tbl.hitpos_ent_ang = {friendly = "hitpos_ent_ang", is_special = true}
 		tbl.hitpos_ent_ang_zero_pitch = {friendly = "hitpos_ent_ang_zero_pitch", is_special = true}
+		tbl.hitpos_noself = {friendly = "hitpos_noself", is_special = true}
 		tbl.pos_ang = {friendly = "pos_ang", is_special = true}
 		tbl.pos_eyeang = {friendly = "pos_eyeang", is_special = true}
 		tbl.eyepos_eyeang = {friendly = "eyepos_eyeang", is_special = true}
@@ -332,6 +333,12 @@ function pac.GetBonePosAng(ent, id, parent)
 			return not (ent:IsNPC() or ent:IsPlayer() or ent:IsNextBot())
 		end)
 		return res.HitPos, res.HitNormal:Angle()
+	elseif id == "hitpos_noself" then
+		local part = pac.bone_requesting_part
+		if part then
+			local res = util_QuickTrace(ent:EyePos(), ent:EyeAngles():Forward() * 16000, part:GetPlayerOwner())
+			return res.HitPos, res.HitNormal:Angle()
+		end
 	elseif id == "footstep" then
 		if ent.pac_last_footstep_pos then
 			return ent.pac_last_footstep_pos, UP

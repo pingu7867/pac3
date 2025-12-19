@@ -306,12 +306,12 @@ do -- nearest life stuff
 				if not is_npc and not is_ply and not is_nextbot then continue end
 				if tbl.filterin then
 					for i,kw in ipairs(tbl.filterin_keywords) do
-						if not string.find(ent:GetClass(), kw) then continue end
+						if not string.find(ent:GetClass(), kw) then goto CONTINUE end
 					end
 				end
 				if tbl.filterout then
 					for i,kw in ipairs(tbl.filterout_keywords) do
-						if string.find(ent:GetClass(), kw) then continue end
+						if string.find(ent:GetClass(), kw) then goto CONTINUE end
 					end
 				end
 				if is_npc and (not tbl.npcfilter or tbl.no_npcs) then continue end
@@ -327,6 +327,7 @@ do -- nearest life stuff
 						nearest_dist = dist
 					end
 				end
+				::CONTINUE::
 			end
 
 			table.sort(distance_sort_list, function(a,b) return a[2] < b[2] end)
@@ -786,7 +787,9 @@ do -- nearest life stuff
 				local pnl = added_params_keyed[NL_params_reverse[key]]
 				if NL_params_reverse[key] and pnl and pac.StringFind(part[pace.NL_config_key], NL_params_reverse[key]) then
 					pnl.chk:SetChecked(true)
-					pnl:SetValue(value)
+					if istable(value) then
+						pnl:SetValue(table.concat(value, ";"))
+					else pnl:SetValue(value) end
 				end
 			end
 		end
