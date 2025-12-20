@@ -592,16 +592,20 @@ do -- scene graph
 		self:GetRootPart():SetEditorExpand(true)
 	end
 
-	function PART:TreeScrollTo()
-		if not self.pace_tree_node then
+	function PART:ScrollTo()
+		if not IsValid(self.pace_tree_node) then
 			self:ExpandParents()
+			pace.RefreshTree(true)
 			timer.Simple(0.3, function()
-				self.pace_tree_node:GetParentNode():ScrollToChild(self.pace_tree_node)
+				local node_x, node_y = self.pace_tree_node:LocalToScreen(0,0)
+				local tree_x, tree_y = pace.tree:LocalToScreen(0,0)
+				pace.tree.VBar:AnimateTo(math.Clamp(node_y - tree_y - ScrH()/6, 0, ScrH()), 0.5)
 			end)
 			return
 		end
-		self.pace_tree_node:GetParentNode():ScrollToChild(self.pace_tree_node)
-		--self.pace_tree_node:GetParentNode():ScrollToChild(self.pace_tree_node)
+		local node_x, node_y = self.pace_tree_node:LocalToScreen(0,0)
+		local tree_x, tree_y = pace.tree:LocalToScreen(0,0)
+		pace.tree.VBar:AnimateTo(math.Clamp(node_y - tree_y - ScrH()/6, 0, ScrH()), 0.5)
 	end
 
 	function PART:SetSmallIcon(str)
