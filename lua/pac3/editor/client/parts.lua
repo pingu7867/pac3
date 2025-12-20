@@ -512,7 +512,7 @@ function pace.OnPartSelected(part, is_selecting, history_navigation)
 	local uids = pace.current_part_history.part_uids
 
 	if not history_navigation and (pace.current_part ~= part) then
-		if pace.current_part_history.parts[1] == part then
+		if pace.current_part_history.parts[1] == part and pace.current_part.ClassName ~= "timeline_dummy_bone" then
 			pace.OnPartSelected(part, true, 1)
 			return
 		end
