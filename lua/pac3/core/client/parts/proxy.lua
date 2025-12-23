@@ -477,38 +477,6 @@ PART.Inputs.sample_and_hold = function(self, seed, duration, min, max, ease)
 	duration = duration or 1
 	if duration == 0 then return min + math.random()*(max-min) end
 
-	--predicting mode for graph
-	if self.timeex_override then
-		local curtime = self.timeex_override
-
-		self.predict_samplehold = self.predict_samplehold or {}
-		self.predict_samplehold_prev = self.predict_samplehold_prev or {}
-		self.predict_samplehold_duration = self.predict_samplehold_duration or {}
-
-		self.predict_samplehold_duration[seed] = self.predict_samplehold_duration[seed] or duration
-		self.predict_samplehold_prev[seed] = self.predict_samplehold_prev[seed] or {value = min + math.random()*(max-min), refresh = curtime}
-		self.predict_samplehold[seed] = self.predict_samplehold[seed] or {value = min + math.random()*(max-min), refresh = curtime + duration}
-
-		local prev = self.predict_samplehold_prev[seed].value
-		local frac = 1 - (self.predict_samplehold[seed].refresh - curtime) / self.predict_samplehold_duration[seed]
-		local delta = self.predict_samplehold[seed].value - prev
-
-		if curtime > self.predict_samplehold[seed].refresh then
-			self.predict_samplehold_prev[seed] = self.predict_samplehold[seed]
-			self.predict_samplehold[seed] = {value = min + math.random()*(max-min), refresh = curtime + duration}
-			self.predict_samplehold_duration[seed] = duration
-		end
-		if not ease then
-			return self.predict_samplehold[seed].value
-		elseif ease == "lin" or ease == "linear" then
-			return prev + frac * delta
-		else
-			local eased_frac = math.ease[ease_aliases[ease]] and math.ease[ease_aliases[ease]](frac) or 1
-			return prev + eased_frac*delta
-		end
-		return
-	end
-
 	self.samplehold = self.samplehold or {}
 	self.samplehold_prev = self.samplehold_prev or {}
 	self.samplehold_duration = self.samplehold_duration or {}
@@ -2467,6 +2435,9 @@ function PART:OnThink(to_hide)
 				set(self, part, x, y, z)
 			end
 		end
+
+		if not self.pace_tree_node then return end
+		if not self.pace_tree_node:IsValid() then return end
 
 		if pace and pace.IsActive() then
 

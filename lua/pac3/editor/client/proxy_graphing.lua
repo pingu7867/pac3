@@ -140,7 +140,7 @@ do -- grapher - line chart
 	local graph_w = 0
 	local graph_h = 0
 	local graph_x_variable = "time()"
-	local graph_x_variable_value = 0
+	local graph_x_variable_current_real_value = 0
 	local active_output_variable = ""
 	local active_expression = ""
 	local last_active_expression = ""
@@ -149,6 +149,7 @@ do -- grapher - line chart
 	local asymptotes_mids = {}
 	local y_crossings = {}
 	local graph_axis = "x"
+	local graph_title = ""
 	local graph_y_value_max = 0
 	local graph_y_value_min = 0
 	local x_btn, y_btn, z_btn
@@ -178,6 +179,8 @@ do -- grapher - line chart
 	local planned_samples = {}
 	local graph_following_x = false
 	local extended_bounds = {0,0}
+
+	local recording_mode = false
 
 
 	local function DataCoversDisplayRange(data, min, max)
@@ -291,21 +294,74 @@ do -- grapher - line chart
 		local j = 0 -- loop counter
 		local i = bounds[1] --min sample
 
-		if current_plan_batch < plan_steps then
+		--main sampling
+		if current_plan_batch < plan_steps or recording_mode then
 			--while input_x < bounds[2] do --until max sample
-			for i,X in ipairs(planned_samples[current_plan_batch]) do
-				--may be slightly randomized
-				local compute_input_x = X
-				if j > throttle_limit then break end
+			local nils
+			local x_same = false 
+			local y_same = false
+			local z_same = false 
 
-				local substituted_func = string.Replace(str,variable_x,compute_input_x)
-				if graph_x_variable == "timeex()" then
-					part.timeex_override = compute_input_x
-					if pac.StringFind(str, "time()") then
-						substituted_func = string.Replace(substituted_func, "time()", "(" .. part.timeex_override .. ")")
+			local prev_x
+			local prev_y
+			local prev_z
+			if not recording_mode then
+				for i,X in ipairs(planned_samples[current_plan_batch]) do
+					--may be slightly randomized
+					local compute_input_x = X
+					if j > throttle_limit then break end
+
+					local substituted_func = string.Replace(str,variable_x,compute_input_x)
+					if graph_x_variable == "timeex()" and not recording_mode then
+						part.timeex_override = compute_input_x
+						if pac.StringFind(str, "time()") then
+							substituted_func = string.Replace(substituted_func, "time()", "(" .. part.timeex_override .. ")")
+						end
 					end
+					
+					local ok2, res = pac.CompileExpression(substituted_func, part.lib)
+					if ok2 then
+						local value = 0
+						local ok3, x,y,z = part:RunExpression(res)
+						local val = 0
+						if graph_axis == "x" then
+							val = x or 0
+						elseif graph_axis == "y" then
+							val = y or 0
+						elseif graph_axis == "z" then
+							val = z or 0
+						end
+						if not x or not y or not z then
+							nils = nils or {}
+							if x == nil then
+								nils.x =  true
+							end
+							if y == nil then
+								nils.y = true
+							end
+							if z == nil then
+								nils.z = true
+							end
+						end
+						if isvector(val) then
+							value = val.x or 0
+						elseif isnumber(val) then
+							value = val
+						end
+						table.insert(points, {compute_input_x, value})
+						points_cache[compute_input_x] = value
+						
+						graph_y_value_min = math.min(value, graph_y_value_min)
+						graph_y_value_max = math.max(value, graph_y_value_max)
+					end
+					input_x = math.Clamp(input_x + step,runtime_data.input_bounds[1],runtime_data.input_bounds[2])
+					j = j + 1
+					i = i + 1
 				end
-				
+			else
+				local compute_input_x = graph_x_variable_current_real_value
+				local substituted_func = string.Replace(str,variable_x,compute_input_x)
+
 				local ok2, res = pac.CompileExpression(substituted_func, part.lib)
 				if ok2 then
 					local value = 0
@@ -318,9 +374,21 @@ do -- grapher - line chart
 					elseif graph_axis == "z" then
 						val = z or 0
 					end
+					if not x or not y or not z then
+						nils = nils or {}
+						if x == nil then
+							nils.x =  true
+						end
+						if y == nil then
+							nils.y = true
+						end
+						if z == nil then
+							nils.z = true
+						end
+					end
 					if isvector(val) then
 						value = val.x or 0
-					elseif isnumber(x) then
+					elseif isnumber(val) then
 						value = val
 					end
 					table.insert(points, {compute_input_x, value})
@@ -332,6 +400,10 @@ do -- grapher - line chart
 				input_x = math.Clamp(input_x + step,runtime_data.input_bounds[1],runtime_data.input_bounds[2])
 				j = j + 1
 				i = i + 1
+			end
+			
+			if nils then
+				runtime_data.nils = nils
 			end
 			current_plan_batch = current_plan_batch + 1
 		end
@@ -471,7 +543,7 @@ do -- grapher - line chart
 			if ok then
 				local ok3, x,y,z = tracked_proxy:RunExpression(func)
 				if ok3 then
-					graph_x_variable_value = x
+					graph_x_variable_current_real_value = x
 				end
 			end
 		end
@@ -494,7 +566,7 @@ do -- grapher - line chart
 			end
 		end
 
-		if not DataCoversDisplayRange(input_data, runtime_data.input_bounds[1], runtime_data.input_bounds[2]) then
+		if not tracked_proxy:IsHidden() and not recording_mode and not DataCoversDisplayRange(input_data, runtime_data.input_bounds[1], runtime_data.input_bounds[2]) then
 			throttle = false
 			local delta = math.abs(runtime_data.input_bounds[2] - runtime_data.input_bounds[1])
 			PlanOutSamplePoints({runtime_data.input_bounds[1] - 0.5*delta, runtime_data.input_bounds[2] + 0.5*delta})
@@ -513,7 +585,7 @@ do -- grapher - line chart
 				local compute_input_x = X
 
 				local substituted_func = string.Replace(active_expression,graph_x_variable,compute_input_x)
-				if graph_x_variable == "timeex()" then
+				if graph_x_variable == "timeex()" and not recording_mode then
 					tracked_proxy.timeex_override = compute_input_x
 					if pac.StringFind(active_expression, "time()") then
 						substituted_func = string.Replace(substituted_func, "time()", "(" .. tracked_proxy.timeex_override .. ")")
@@ -546,6 +618,19 @@ do -- grapher - line chart
 					graph_y_value_max = math.max(value, graph_y_value_max)
 				end
 				input_x = math.Round(math.Clamp(input_x + step,runtime_data.input_bounds[1],runtime_data.input_bounds[2]),1)
+			end
+			table.sort(points, function(a,b) return a[1] < b[1] end)
+			input_data = points
+		end
+
+		if recording_mode and graph_following_x then
+			local points = {}
+			for x_val,y_val in pairs(points_cache) do
+				if x_val < runtime_data.input_bounds[1] or x_val > runtime_data.input_bounds[2] then
+					points_cache[x_val] = nil
+				else
+					table.insert(points, {x_val, y_val})
+				end
 			end
 			table.sort(points, function(a,b) return a[1] < b[1] end)
 			input_data = points
@@ -673,7 +758,7 @@ do -- grapher - line chart
 		surface.SetTextColor(255,255,255)
 
 		surface.SetTextPos(x + w + 24,math.Clamp(main_x_y,base_y,base_y+h))
-		surface.DrawText("x axis : " .. graph_x_variable .. " = " .. (graph_x_variable_value or 0))
+		surface.DrawText("x axis : " .. graph_x_variable .. " = " .. (graph_x_variable_current_real_value or 0))
 
 		surface.SetTextPos(main_y_x,y - 0.5*h - 24)
 		surface.DrawText("y axis : " .. active_output_variable)
@@ -764,9 +849,9 @@ do -- grapher - line chart
 			x1 = x2
 		end
 
-		if graph_x_variable_value and tracked_proxy then
+		if graph_x_variable_current_real_value and tracked_proxy then
 			if (not tracked_proxy:IsHidden()) and graph_x_variable == "timeex()" then
-				local x1, x2 = project_coords(graph_x_variable_value,0)
+				local x1, x2 = project_coords(graph_x_variable_current_real_value,0)
 				surface.SetDrawColor(0,150,255)
 				surface.DrawLine(x1,base_y,x1,base_y + h)
 			end
@@ -782,6 +867,10 @@ do -- grapher - line chart
 				surface.DrawText("{" .. math.Round(mouse_crossing[1],2) .. ", " .. math.Round(mouse_crossing[2],2) .. "}")
 			end
 		end
+		surface.SetDrawColor(100,100,100)
+		local tw, th = surface.GetTextSize(graph_title)
+		surface.SetTextPos(x + w/2 - tw/2, base_y + 20)
+		surface.DrawText(graph_title)
 		tracked_proxy.timeex_override = nil
 	end
 
@@ -878,8 +967,20 @@ do -- grapher - line chart
 				graph_x_variable = tracked_proxy.Input.."()"
 			end
 			current_runtime_data = runtime_data
+			if (recording_mode and tracked_proxy:IsHidden()) then
+				pace.reset_proxygraph = true
+			end
+			if pace.reset_proxygraph then points_cache = {} pace.reset_proxygraph = nil end
 			local input_data = SampleData(tracked_proxy, graph_x_variable, runtime_data)
+			
+			if runtime_data.nils then
+				if runtime_data.nils.x and graph_axis == "x" then graph_axis = "y" graph_title = "nil output on x, switched to y" end
+				if runtime_data.nils.y and graph_axis == "y" then graph_axis = "z" graph_title = "nil output on y, switched to z" end
+				if runtime_data.nils.z and graph_axis == "z" then graph_axis = "x" graph_title = "nil output on z, switched to x" end
+			end
+
 			DrawGraph(x,y,graph_w,graph_h,runtime_data,input_data)
+
 		end
 	end)
 
@@ -1034,11 +1135,14 @@ do -- grapher - line chart
 					variable_name_pnl:SetValue("timeex()")
 				elseif timeex_derived_func then
 					variable_name_pnl:SetValue("timeex()")
-
 				elseif table.HasValue(variables, "time") then
 					variable_name_pnl:SetValue("time()")
 				else 
 					variable_name_pnl:SetValue("time()")
+				end
+
+				if table.HasValue(variables, "drift") or table.HasValue(variables, "random_drift") or table.HasValue(variables, "sample_and_hold") or table.HasValue(variables, "samplehold") then
+					recording_mode = true
 				end
 			end
 		
@@ -1222,18 +1326,19 @@ do -- grapher - line chart
 				--timer.Simple(2, reset_points_cache)
 			end
 		local follow_x = vgui.Create("DButton", pnl2)
-			follow_x:SetText("follow") follow_x:SetSize(40, 20) follow_x:SetPos(200,0)
+			follow_x:SetTooltip("toggle follow mode")
+			follow_x:SetText("FLW") follow_x:SetSize(40, 20) follow_x:SetPos(200,0)
 			function follow_x:DoClick()
 				move = true
 				if self.held then
 					self.held = false
 					graph_following_x = false
 					local span = max_x_target - min_x_target
-					graph_x_variable_value = graph_x_variable_value or 0
-					max_x_slider:SetValue(graph_x_variable_value + 0.5*span)
-					min_x_slider:SetValue(graph_x_variable_value - 0.5*span)
-					max_x_target = graph_x_variable_value + 0.5*span
-					min_x_target = graph_x_variable_value - 0.5*span
+					graph_x_variable_current_real_value = graph_x_variable_current_real_value or 0
+					max_x_slider:SetValue(graph_x_variable_current_real_value + 0.5*span)
+					min_x_slider:SetValue(graph_x_variable_current_real_value - 0.5*span)
+					max_x_target = graph_x_variable_current_real_value + 0.5*span
+					min_x_target = graph_x_variable_current_real_value - 0.5*span
 					move = false
 				else
 					self.held = true
@@ -1247,14 +1352,16 @@ do -- grapher - line chart
 
 
 				if self.held then
-					self:SetImage("icon16/arrow_right.png")
-					if not graph_x_variable_value then return end
+					if not graph_x_variable_current_real_value then return end
 					if not move then return end
+
+					if tracked_proxy:IsHidden() then
+						graph_x_variable_current_real_value = 0
+					end
+
 					local span = max_x_target - min_x_target
-					max_x_slider:SetValue(math.Round(graph_x_variable_value + 0.5*span,3))
-					min_x_slider:SetValue(math.Round(graph_x_variable_value - 0.5*span,3))
-				else
-					self:SetImage("icon16/anchor.png")
+					max_x_slider:SetValue(math.Round(graph_x_variable_current_real_value + 0.5*span,3))
+					min_x_slider:SetValue(math.Round(graph_x_variable_current_real_value - 0.5*span,3))
 				end
 			end
 
@@ -1305,6 +1412,7 @@ do -- grapher - line chart
 				min_y_target = 0
 			end
 		local follow_y = vgui.Create("DButton", pnl2)
+			follow_x:SetTooltip("toggle y-follow mode (fit data to graph vertically)")
 			follow_y:SetText("fit") follow_y:SetSize(40, 20) follow_y:SetPos(200,20)
 			function follow_y:DoClick()
 				move = true
@@ -1319,14 +1427,14 @@ do -- grapher - line chart
 				oldthink(self)
 				if self.held then
 					move = true
-					if not graph_x_variable_value then return end
+					if not graph_x_variable_current_real_value then return end
 					max_y_target = math.Round(graph_y_value_max,2)
 					min_y_target = math.Round(graph_y_value_min,2)
 				end
 			end
 
 		local origin_btn = vgui.Create("DButton", pnl2)
-			origin_btn:SetText("{0,0}") origin_btn:SetSize(60, 20) origin_btn:SetPos(0,40)
+			origin_btn:SetText("{0,0}") origin_btn:SetSize(40, 20) origin_btn:SetPos(0,40)
 			function origin_btn:DoClick()
 				move = true
 				local span_x = max_x_target - min_x_target
@@ -1337,9 +1445,9 @@ do -- grapher - line chart
 				min_y_target = -0.5*span_y
 			end
 
-		local btn = vgui.Create("DButton", pnl2)
-			btn:SetText("reset cache") btn:SetSize(60, 20) btn:SetPos(60,40)
-			function btn:DoClick()
+		local reset_btn = vgui.Create("DButton", pnl2)
+			reset_btn:SetText("reset") reset_btn:SetSize(40, 20) reset_btn:SetPos(40,40)
+			function reset_btn:DoClick()
 				reset_points_cache()
 				move = false
 				editing = false
@@ -1349,8 +1457,16 @@ do -- grapher - line chart
 				min_y_slider:SetValue(math.Round(min_y_slider:GetValue(),0))
 			end
 
+		local rec_btn = vgui.Create("DButton", pnl2)
+			rec_btn:SetTooltip("toggle between recording mode and prediction mode")
+			rec_btn:SetText("REC") rec_btn:SetSize(40, 20) rec_btn:SetPos(80,40)
+			function rec_btn:DoClick()
+				recording_mode = not recording_mode
+				if recording_mode then pace.FlashNotification("switched to real-time recording mode") else pace.FlashNotification("switched to prediction mode") end
+			end
+
 		local btn_close = vgui.Create("DButton", pnl2)
-			btn_close:SetText("close graph") btn_close:SetSize(60, 20) btn_close:SetPos(180,40)
+			btn_close:SetText("close") btn_close:SetSize(60, 20) btn_close:SetPos(180,40)
 			function btn_close:DoClick()
 				pace.CloseProxyGrapher()
 			end
