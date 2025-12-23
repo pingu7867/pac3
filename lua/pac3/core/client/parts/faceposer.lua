@@ -50,12 +50,17 @@ BUILDER:StartStorableVars()
 	:GetSet("FlexWeights", "", {hidden = true})
 	:GetSet("Scale", 1)
 	:GetSet("Additive", false)
+	:GetSet("AlternativeFlex", false, {description = "Use the alternate GetFlexMap function from the flex part as a fallback if the model somehow breaks.\nThis may break the flexes if they're already good"})
 :EndStorableVars()
 
 
+local prettify_name = CreateClientConVar("pac_faceposer_prettify_names", "1", true, false, "whether to prettify flex names in the faceposer part\nEyeDown -> Eye Down\neye_down -> Eye Down\neye-down -> Eye Down")
+
 -- Make the internal flex names be more presentable, TODO: handle numbers
 local function PrettifyName( name )
+	if not prettify_name:GetBool() then return name end
 	name = name:Replace( "_", " " )
+	name = name:Replace( "-", " " )
 
 	-- Try to split text into words, where words would start with single uppercase character
 	local newParts = {}
@@ -113,6 +118,7 @@ function PART:GetDynamicProperties()
 			udata = {
 				editor_friendly = PrettifyName(name),
 				group = "flexes",
+				override_case = true,
 				editor_sensitivity = 0.1,
 				editor_onchange = function(self, num)
 					local min, max = ent:GetFlexBounds(i)
@@ -150,6 +156,16 @@ function PART:GetWeightMap()
 	return self.weight_map
 end
 
+function PART:GetFlexID(name)
+	local ent = self:GetOwner()
+	if not ent:IsValid() or not ent.GetFlexNum or ent:GetFlexNum() == 0 then return end
+
+	local flex_map = pac.GetFlexMap(ent)
+	local flex = flex_map[name:lower()]
+
+	return flex and flex.i, ent
+end
+
 function PART:UpdateFlex()
 	local ent = self:GetOwner()
 	if not ent:IsValid() then return end
@@ -157,8 +173,13 @@ function PART:UpdateFlex()
 	ent:SetFlexScale(self.Scale)
 	ent.pac_touching_flexes = ent.pac_touching_flexes or {}
 
+	local alt_flex = self.AlternativeFlex
 	for name, weight in pairs(self:GetWeightMap()) do
 		local id = ent:GetFlexIDByName(name)
+		if alt_flex then
+			local id2 = self:GetFlexID(name)
+			if id ~= id2 then id = id2 end
+		end
 		if id then
 			if self.Additive then
 				weight = ent:GetFlexWeight(id) + weight
