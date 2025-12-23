@@ -2331,14 +2331,18 @@ function PART:OnThink(to_hide)
 			end
 		end
 
-		--foolproofing: scream at the user if they didn't set a variable name and there's no extra expressions ready to be used
-		if self == pace.current_part then self.touched = true end
-		if self ~= pace.current_part and self.VariableName == "" and self.touched and self.Extra1 == ""	and self.Extra2 == "" and self.Extra3 == "" and self.Extra4 == "" and self.Extra5 == "" then
-			self:AttachEditorPopup("You forgot to set a variable name! The proxy won't work until it knows where to send the math!", true)
-			pace.FlashNotification("An edited proxy still has no variable name! The proxy won't work until it knows where to send the math!")
-			self:SetWarning("You forgot to set a variable name! The proxy won't work until it knows where to send the math!")
-			self.touched = false
-		elseif self.VariableName ~= "" and not self.error and not self.errors_override then self:SetWarning() end
+		if playerowner then
+			if pace and pace.IsActive() then
+				--foolproofing: scream at the user if they didn't set a variable name and there's no extra expressions ready to be used
+				if self == pace.current_part then self.touched = true end
+				if self ~= pace.current_part and self.VariableName == "" and self.touched and self.Extra1 == ""	and self.Extra2 == "" and self.Extra3 == "" and self.Extra4 == "" and self.Extra5 == "" then
+					self:AttachEditorPopup("You forgot to set a variable name! The proxy won't work until it knows where to send the math!", true)
+					pace.FlashNotification("An edited proxy still has no variable name! The proxy won't work until it knows where to send the math!")
+					self:SetWarning("You forgot to set a variable name! The proxy won't work until it knows where to send the math!")
+					self.touched = false
+				elseif self.VariableName ~= "" and not self.error and not self.errors_override then self:SetWarning() end
+			end
+		end
 
 		self:CalcVelocity()
 	self:PerfCheckpoint("pre_setup", false)
@@ -2437,7 +2441,7 @@ function PART:OnThink(to_hide)
 			end
 		end
 
-		if not self.PreviewOutput then
+		if not playerowner and not self.PreviewOutput then
 			if not self.pace_tree_node then return end
 			if not self.pace_tree_node:IsValid() then return end
 		else
