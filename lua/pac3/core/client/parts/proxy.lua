@@ -2316,6 +2316,7 @@ function PART:PerfCheckpoint(str, b) --each pair costs 0.65 microseconds, pretty
 end
 
 function PART:OnThink(to_hide)
+	local playerowner = self:GetPlayerOwner() == pac.LocalPlayer
 	--if math.random() > 0.5 then return end
 	self.checkpoints = {}
 	
@@ -2370,7 +2371,7 @@ function PART:OnThink(to_hide)
 		end
 
 		if not ok then self.error = true
-			if self:GetPlayerOwner() == pac.LocalPlayer and self.Expression ~= self.LastBadExpression then
+			if playerowner and self.Expression ~= self.LastBadExpression then
 				--don't spam the chat every time we type a single character in the luapad
 				if not (pace.ActiveSpecialPanel and pace.ActiveSpecialPanel.luapad) then
 					chat.AddText(Color(255,180,180),"============\n[ERR] PAC Proxy error on "..tostring(self)..":\n"..x.."\n============\n")
@@ -2436,11 +2437,10 @@ function PART:OnThink(to_hide)
 			end
 		end
 
-		if not self.pace_tree_node then return end
-		if not self.pace_tree_node:IsValid() then return end
-
-		if pace and pace.IsActive() then
-
+		if not self.PreviewOutput then
+			if not self.pace_tree_node then return end
+			if not self.pace_tree_node:IsValid() then return end
+		else
 			local str = ""
 
 			if x then str = str .. math.Round(x, 3) end
@@ -2536,7 +2536,7 @@ function PART:OnThink(to_hide)
 		end
 		self:SetError(error_msg) self.error = true
 	end
-	if self:GetPlayerOwner() == pac.LocalPlayer then
+	if playerowner then
 		if self.PreviewOutput then
 			pac.AddHook("HUDPaint", "proxy" .. self.UniqueID, function() draw_proxy_text(self, str) end)
 		else
